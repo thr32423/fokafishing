@@ -1,0 +1,1991 @@
+<meta charset="utf-8">
+<title>Foka Fishing</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  /* One-screen game: a 320x180 pixel canvas scaled up with nearest-neighbour, centred on a deep-sea ground. */
+  :root { --ground: #0b1622; color-scheme: dark; }
+  html, body { height: 100%; margin: 0; background: var(--ground); overflow: hidden; touch-action: none; }
+  body { display: flex; align-items: center; justify-content: center;
+         padding-left: max(0px, env(safe-area-inset-left, 0px)); padding-right: max(0px, env(safe-area-inset-right, 0px)); }
+  canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; max-width: 100%; }
+</style>
+<canvas id="game" width="320" height="180" aria-label="Foka Fishing game. Arrow keys or WASD move the hook."></canvas>
+<script>
+'use strict';
+// ================= constants =================
+const W = 320, H = 180;
+const SURF = 100, BED = 520, WORLD_H = 540;
+const ICE_TOP = 92, ICE_EDGE = 124, SEAL_RIGHT = 118;
+const MIN_SIZE = 12, START_SIZE = 34, MAX_SIZE = 100;
+const HOOK_MIN_X = 130, HOOK_MAX_X = 314;
+const JUMP_DUR = .9;
+// the cavern inside the berg where the shark fight happens, the shaft she smashes down into it, and the shark's tunnel
+const AR = { x0: 14, x1: 306, y0: SURF + 50, y1: SURF + 250 }, SH0 = 10, SH1 = 130, TUN = { y0: SURF + 104, y1: SURF + 136 };
+let iceBroken = false;
+
+const cv = document.getElementById('game');
+const ctx = cv.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+function resize() {
+  // fill the whole window; pixelated rendering keeps the pixels sharp at any scale
+  const k = Math.min(innerWidth / W, innerHeight / H);
+  cv.style.width = W * k + 'px';
+  cv.style.height = H * k + 'px';
+}
+addEventListener('resize', resize);
+resize();
+
+// ================= helpers =================
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const rand = (a, b) => a + Math.random() * (b - a);
+function hash(x, y) {
+  let h = (x * 374761393 + y * 668265263) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+const rgbCache = {};
+function RGB(c) {
+  if (typeof c !== 'string') return c;
+  return rgbCache[c] || (rgbCache[c] = [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)]);
+}
+function mix(a, b, t) {
+  a = RGB(a); b = RGB(b);
+  return [Math.round(lerp(a[0], b[0], t)), Math.round(lerp(a[1], b[1], t)), Math.round(lerp(a[2], b[2], t))];
+}
+const hex = c => typeof c === 'string' ? c : '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
+function makeCanvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+const inE = (u, v, cx, cy, rx, ry) => ((u - cx) / rx) ** 2 + ((v - cy) / ry) ** 2 <= 1;
+
+// Pixel buffer that becomes a canvas sprite
+function pixbuf(w, h) {
+  const img = new ImageData(w, h), d = img.data;
+  return {
+    w, h,
+    put(x, y, c) {
+      x |= 0; y |= 0;
+      if (x < 0 || y < 0 || x >= w || y >= h) return;
+      c = RGB(c); const i = (y * w + x) * 4;
+      d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255;
+    },
+    get(x, y) { return x >= 0 && y >= 0 && x < w && y < h && d[(y * w + x) * 4 + 3] > 0; },
+    done() { const c = makeCanvas(w, h); c.getContext('2d').putImageData(img, 0, 0); return c; },
+  };
+}
+function bresenham(x0, y0, x1, y1, fn) {
+  x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
+  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  for (let n = 0; n < 2000; n++) {
+    fn(x0, y0);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+}
+
+// ================= pixel font (3x5) =================
+const FONT = {
+  A:'010101111101101',B:'110101110101110',C:'011100100100011',D:'110101101101110',E:'111100110100111',
+  F:'111100110100100',G:'011100101101011',H:'101101111101101',I:'111010010010111',J:'001001001101010',
+  K:'101101110101101',L:'100100100100111',M:'101111111101101',N:'110101101101101',O:'010101101101010',
+  P:'110101110100100',Q:'010101101110011',R:'110101110101101',S:'011100010001110',T:'111010010010010',
+  U:'101101101101111',V:'101101101101010',W:'101101111111101',X:'101101010101101',Y:'101101010010010',
+  Z:'111001010100111','0':'111101101101111','1':'010110010010111','2':'110001010100111','3':'110001010001110',
+  '4':'101101111001001','5':'111100110001110','6':'011100111101111','7':'111001010010010','8':'111101111101111',
+  '9':'111101111001110',' ':'000000000000000','.':'000000000000010',',':'000000000010100',':':'000010000010000',
+  '!':'010010010000010','?':'110001010000010','-':'000000111000000','+':'000010111010000','/':'001001010100100',
+  "'":'010010000000000','%':'101001010100101','(':'010100100100010',')':'010001001001010','=':'000111000111000',
+  '<':'001010100010001','>':'100010001010100','*':'000101010101000',
+};
+function glyphs(s, x, y, col, sc) {
+  ctx.fillStyle = col;
+  for (let i = 0; i < s.length; i++) {
+    const g = FONT[s[i]] || FONT['?'];
+    for (let p = 0; p < 15; p++) if (g.charCodeAt(p) === 49)
+      ctx.fillRect(x + i * 4 * sc + (p % 3) * sc, y + ((p / 3) | 0) * sc, sc, sc);
+  }
+}
+const tw = (s, sc = 1) => String(s).length * 4 * sc - sc;
+function txt(s, x, y, col = '#ffffff', sc = 1, sh = '#0b1520') {
+  s = String(s).toUpperCase(); x = Math.round(x); y = Math.round(y);
+  if (sh) glyphs(s, x, y + sc, sh, sc);
+  glyphs(s, x, y, col, sc);
+}
+const ctxt = (s, cx, y, col, sc = 1, sh) => txt(s, cx - tw(s, sc) / 2, y, col, sc, sh);
+
+// ================= sound =================
+let actx = null, muted = false;
+function audio() {
+  if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; } }
+  if (actx.state === 'suspended') actx.resume();
+}
+function tone(f0, f1, dur, type = 'square', vol = 0.05, delay = 0) {
+  if (!actx || muted) return;
+  const t0 = actx.currentTime + delay, o = actx.createOscillator(), g = actx.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(f0, t0);
+  o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t0 + dur);
+  g.gain.setValueAtTime(vol, t0);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g).connect(actx.destination);
+  o.start(t0); o.stop(t0 + dur + 0.02);
+}
+function noise(dur, vol = 0.08, freq = 900) {
+  if (!actx || muted) return;
+  const len = Math.floor(actx.sampleRate * dur), buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
+  src.buffer = buf; f.type = 'bandpass'; f.frequency.value = freq; g.gain.value = vol;
+  src.connect(f).connect(g).connect(actx.destination); src.start();
+}
+const SFX = {
+  plop() { tone(700, 300, 0.08, 'sine', 0.06); },
+  bite() { tone(520, 900, 0.07); tone(900, 1300, 0.06, 'square', 0.04, 0.08); },
+  splash() { noise(0.3, 0.12, 800); },
+  chomp() { tone(240, 90, 0.07, 'square', 0.07); tone(220, 80, 0.07, 'square', 0.07, 0.13); tone(500, 1000, 0.15, 'triangle', 0.05, 0.28); },
+  snap() { tone(1500, 120, 0.25, 'sawtooth', 0.05); },
+  zap() { tone(1800, 300, 0.2, 'sawtooth', 0.04); tone(1200, 200, 0.2, 'square', 0.03, 0.05); },
+  reel() { tone(1700, 1500, 0.015, 'square', 0.012); },
+  die() { [440, 370, 311, 262, 196].forEach((f, i) => tone(f, f * 0.97, 0.3, 'triangle', 0.07, i * 0.25)); },
+  crack() { noise(.5, .25, 300); tone(160, 40, .5, 'sawtooth', .12); tone(90, 30, .7, 'square', .08, .1); },
+  roar() { tone(90, 60, .5, 'sawtooth', .1); noise(.4, .1, 200); },
+  hit() { tone(200, 60, .18, 'square', .09); noise(.15, .12, 500); },
+  win() { [523, 659, 784, 1047, 784, 1047].forEach((f, i) => tone(f, f, .18, 'square', .06, i * .13)); },
+};
+
+// ================= seal sprite (rasterized per size so pixels stay square) =================
+const SEAL_PAL = { id: 'grey',
+  ol: '#25303c', base: '#8c9eae', hi: '#b8c7d3', sh: '#62748a', belly: '#d2dce3', spot: '#5a6b7f',
+  snout: '#a9b8c4', flip: '#5b6b7e', flipSh: '#46556a', eye: '#11161d', nose: '#1a2028',
+  mouth: '#3a1a24', tongue: '#d9707f', whisk: '#eef3f6', white: '#ffffff',
+};
+// the Baikal nerpa colours: also the skin she earns by feeding them
+const NERPA_PAL = { ...SEAL_PAL, id: 'nerpa', base: '#6e7278', hi: '#9a9ea4', sh: '#4a4e55', belly: '#b9bcc0', spot: '#54585e', snout: '#8a8e94', flip: '#4a4e55', flipSh: '#36393f' };
+const sealCache = new Map();
+function sealSprite(size, mouth, eyes, ghost, pal = SEAL_PAL) {
+  const SC = pal;
+  const w = Math.max(10, Math.round(size)), key = w + '|' + mouth + '|' + eyes + '|' + ghost + '|' + pal.id;
+  const cached = sealCache.get(key);
+  if (cached) return cached;
+  const h = Math.round(w * 0.78), pad = Math.ceil(w * 0.1) + 1, cw = w + pad * 2, ch = h + pad * 2;
+  const U = x => (x - pad + 0.5) / w, V = y => (y - pad + 0.5) / h;
+  const reg = new Uint8Array(cw * ch);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+    const u = U(x), v = V(y);
+    let r = 0;
+    if (inE(u, v, .44, .64, .44, .34) || inE(u, v, .66, .52, .22, .30)) r = 1; // one plump potato of a body
+    if (inE(u, v, .76, .42, .19, .26)) r = 2;                                   // head, barely distinct from the body
+    if (inE(u, v, .90, .50, .10, .10)) r = 3;                                   // snout
+    if (!r && (inE(u, v, .05, .78, .08, .05) || inE(u, v, .06, .90, .08, .04))) r = 4; // tail flippers
+    if (inE(u, v, .58, .92, .12, .06)) r = 4;                                   // front flipper
+    reg[y * cw + x] = r;
+  }
+  const at = (x, y) => (x < 0 || y < 0 || x >= cw || y >= ch) ? 0 : reg[y * cw + x];
+  const pb = pixbuf(cw, ch);
+  const dark = new Set([SC.ol, SC.eye, SC.nose, SC.mouth]);
+  const put = (x, y, c) => pb.put(x, y, ghost ? (dark.has(c) ? '#8ea7c4' : '#eef5ff') : c);
+  const k = Math.max(1, Math.round(w / 24)), cs = Math.max(3, w / 8);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+    const r = at(x, y);
+    if (!r) {
+      if (at(x + 1, y) || at(x - 1, y) || at(x, y + 1) || at(x, y - 1)) put(x, y, SC.ol);
+      continue;
+    }
+    const u = U(x), v = V(y), lit = !at(x - k, y - k), shd = !at(x + k, y + k);
+    let c;
+    if (r === 4) {
+      c = shd ? SC.flipSh : SC.flip;
+      const above = at(x, y - 1);
+      if (above === 1 || above === 2) c = SC.ol;
+    } else {
+      c = r === 3 ? SC.snout : SC.base;
+      if (r === 1 && inE(u, v, .50, .86, .34, .12)) c = SC.belly;
+      if (r !== 3) {
+        const gx = Math.floor((x - pad) / cs), gy = Math.floor((y - pad) / cs);
+        if (hash(gx, gy) < 0.3) {
+          const sx = (gx + 0.3 + hash(gy, gx + 7) * 0.4) * cs, sy = (gy + 0.3 + hash(gx + 3, gy) * 0.4) * cs;
+          if (Math.hypot(x - pad + 0.5 - sx, y - pad + 0.5 - sy) < Math.max(0.75, cs * 0.2)) c = SC.spot;
+        }
+      }
+      if (shd) c = SC.sh; else if (lit) c = SC.hi;
+    }
+    put(x, y, c);
+  }
+  // mouth
+  if (mouth) {
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+      const u = U(x), v = V(y), r = at(x, y);
+      if ((r === 2 || r === 3) && u > 0.80) {
+        const m = v - 0.50, d = u - 0.80;
+        if (m > -d * 0.6 && m < d * 1.1) put(x, y, m > d * 0.45 ? SC.tongue : SC.mouth);
+      }
+    }
+  } else {
+    const x0 = Math.round(pad + 0.89 * w), x1 = Math.round(pad + 0.985 * w), my = Math.round(pad + 0.50 * h);
+    for (let x = x0; x <= x1; x++) put(x, my, SC.ol);
+    put(x0 - 1, my - 1, SC.ol);
+  }
+  // nose
+  const nx = pad + 0.975 * w, ny = pad + 0.46 * h, nr = Math.max(0.8, w * 0.022);
+  for (let y = Math.floor(ny - nr - 1); y <= ny + nr + 1; y++) for (let x = Math.floor(nx - nr - 1); x <= nx + nr + 1; x++)
+    if (Math.hypot(x + 0.5 - nx, y + 0.5 - ny) <= nr) put(x, y, SC.nose);
+  // eyes
+  const ex = pad + 0.78 * w, ey = pad + 0.33 * h, er = Math.max(0.9, w * 0.032);
+  if (eyes === 'open') {
+    for (let y = Math.floor(ey - er - 1); y <= ey + er + 1; y++) for (let x = Math.floor(ex - er - 1); x <= ex + er + 1; x++)
+      if (Math.hypot(x + 0.5 - ex, y + 0.5 - ey) <= er) put(x, y, SC.eye);
+    if (er >= 1.4) put(Math.floor(ex - er * 0.35), Math.floor(ey - er * 0.35), SC.white);
+  } else if (eyes === 'blink') {
+    for (let x = Math.floor(ex - er); x <= Math.floor(ex + er); x++) put(x, Math.floor(ey), SC.eye);
+  } else {
+    const n = Math.max(1, Math.round(er)), cx = Math.floor(ex), cy = Math.floor(ey);
+    for (let i = -n; i <= n; i++) { put(cx + i, cy + i, SC.eye); put(cx + i, cy - i, SC.eye); }
+  }
+  // whiskers
+  if (w >= 18) {
+    const sx = pad + 0.93 * w, sy = pad + 0.47 * h;
+    [[1.06, 0.42], [1.08, 0.49], [1.05, 0.56]].forEach(([u, v]) => {
+      let n = 0;
+      bresenham(sx, sy, pad + u * w, pad + v * h, (x, y) => { if (n++ > 1) put(x, y, SC.whisk); });
+    });
+  }
+  const s = { c: pb.done(), pad, w, h };
+  sealCache.set(key, s);
+  return s;
+}
+
+// ================= fish =================
+const FISH = [
+  { name: 'SPRAT', len: 8, ratio: .42, dmin: 6, dmax: 140, speed: 26, str: .15, w: 10, back: '#5f7f95', body: '#b8c7d1', belly: '#eef3f5', fin: '#8fa5b5', ol: '#2c3a46' },
+  { name: 'HERRING', len: 12, ratio: .38, dmin: 20, dmax: 200, speed: 24, str: .3, w: 8, back: '#2f5f86', body: '#9db8cc', belly: '#e6eef4', fin: '#6d8ea8', ol: '#1d2f40' },
+  { name: 'MACKEREL', len: 16, ratio: .34, dmin: 40, dmax: 240, speed: 30, str: .5, w: 6, back: '#2c6b5a', body: '#9cc6b5', belly: '#eaf3ef', fin: '#4a8a76', ol: '#163a31', stripes: '#173d33' },
+  { name: 'COD', len: 22, ratio: .38, dmin: 130, dmax: 360, speed: 15, str: .7, w: 4, back: '#6c5a37', body: '#b49c69', belly: '#e8dcc0', fin: '#8a7445', ol: '#33291a', spots: '#5a4a2a' },
+  { name: 'SALMON', len: 26, ratio: .34, dmin: 90, dmax: 320, speed: 24, str: .85, w: 3, back: '#5c6f86', body: '#d6a7a3', belly: '#f3e2df', fin: '#8f7f8f', ol: '#2d2a35', spots: '#3e4a5c' },
+  { name: 'TUNA', len: 34, ratio: .36, dmin: 260, dmax: 400, speed: 20, str: 1.1, w: 2.5, back: '#1f3a63', body: '#5b7fb0', belly: '#d3deea', fin: '#e5c23a', ol: '#0f1c33' },
+  { name: 'GOLDEN FISH', len: 12, ratio: .44, dmin: 120, dmax: 400, speed: 38, str: .5, w: 3.5, back: '#c9781e', body: '#f2b43a', belly: '#ffe69a', fin: '#ff9f2e', ol: '#5a2e08', rare: true },
+  { name: 'CLOWNFISH', len: 10, ratio: .5, dmin: 20, dmax: 150, speed: 20, str: .2, w: 5, back: '#e8641e', body: '#f7852e', belly: '#ffb070', fin: '#e05a18', ol: '#3a1404', bands: '#fff8f0' },
+  { name: 'PUFFERFISH', len: 12, ratio: .78, dmin: 50, dmax: 260, speed: 10, str: .3, w: 4, back: '#a8913a', body: '#e2cf74', belly: '#f8f0c8', fin: '#c8a848', ol: '#3a2e0a', spots: '#7a6420', spike: '#5a4a18', shape: 'puffer', pad: 2, eyes: [[.8, .36]], bigEye: true },
+  { name: 'RAINBOW TROUT', len: 18, ratio: .3, dmin: 60, dmax: 230, speed: 22, str: .55, w: 4, back: '#5a7a4a', body: '#b8c8a0', belly: '#f0f0e0', fin: '#8aa070', ol: '#26321e', spots: '#2e3a22', stripe2: '#e07a8a' },
+  { name: 'RED SNAPPER', len: 20, ratio: .42, dmin: 150, dmax: 330, speed: 18, str: .65, w: 3, back: '#b8323a', body: '#e0606a', belly: '#f8c0c0', fin: '#d04a50', ol: '#4a0e14' },
+  { name: 'FLOUNDER', len: 18, ratio: .5, dmin: 360, dmax: 412, speed: 9, str: .55, w: 3, back: '#8a7a5a', body: '#8a7a5a', belly: '#a8987a', fin: '#a08a62', ol: '#3a301e', spots: '#5a4c34', shape: 'flat', eyes: [[.82, .26], [.72, .2]] },
+  { name: 'EEL', len: 30, ratio: .14, dmin: 320, dmax: 410, speed: 14, str: .9, w: 2.5, back: '#3a4a2e', body: '#5a6a3e', belly: '#a8a878', fin: '#4a5a32', ol: '#161e10', shape: 'eel', eyes: [[.93, .36]] },
+  { name: 'ANGLERFISH', len: 18, ratio: .62, dmin: 340, dmax: 410, speed: 9, str: .75, w: 2.2, back: '#2e2430', body: '#4a3a48', belly: '#6a5866', fin: '#3a2e3a', ol: '#0e0a10', spots: '#3a2c38', shape: 'angler', pad: 3, eyes: [[.66, .34]], lure: true },
+  { name: 'SWORDFISH', len: 40, ratio: .24, dmin: 200, dmax: 380, speed: 27, str: 1.3, w: 2, back: '#2a3a5e', body: '#5a6e96', belly: '#d0d8e6', fin: '#3a4a72', ol: '#0e1426', bill: '#8a94a8', shape: 'sword', pad: 2, eyes: [[.74, .42]] },
+];
+// body regions for the non-standard fish shapes: 1 body, 2 fin, 3 bill, 5 spike
+function shapeRegion(shape, u, v, x, y) {
+  if (shape === 'eel') return inE(u, v, .88, .5, .1, .48) || (u > .02 && u < .9 && Math.abs(v - .5) <= .46 * Math.min(1, u / .4)) ? 1 : 0;
+  if (shape === 'puffer') {
+    if (inE(u, v, .56, .5, .4, .46)) return 1;
+    if (u < .2 && Math.abs(v - .5) <= .06 + (.2 - u) * 1.2) return 2;
+    return inE(u, v, .56, .5, .5, .58) && (x + y) % 3 === 0 ? 5 : 0;
+  }
+  if (shape === 'flat') {
+    if (inE(u, v, .55, .5, .4, .4)) return 1;
+    return inE(u, v, .53, .5, .46, .52) || (u < .14 && Math.abs(v - .5) <= .05 + (.14 - u) * 2) ? 2 : 0;
+  }
+  if (shape === 'sword') {
+    if (inE(u, v, .5, .5, .34, .42)) return 1;
+    if (u > .8 && Math.abs(v - .46) <= .06 * (1 - (u - .8) / .2) + .025) return 3;
+    if (u < .2 && Math.abs(v - .5) <= .08 + (.2 - u) * 2.2 && Math.abs(v - .5) >= (.2 - u) * .9) return 2;
+    return v < .34 && inE(u, v, .44, .14, .09, .3) ? 2 : 0;
+  }
+  if (shape === 'angler') {
+    if (inE(u, v, .48, .56, .4, .42)) return 1;
+    return u < .14 && Math.abs(v - .56) <= .06 + (.14 - u) * 1.5 ? 2 : 0;
+  }
+  if (shape === 'pup') {
+    if (inE(u, v, .52, .56, .36, .3) || inE(u, v, .84, .6, .14, .2)) return 1;
+    if (u > .4 && u < .58 && v < .3 && v >= .3 - (u - .4) * 1.7) return 2;
+    return u < .2 && Math.abs(v - .55) <= .06 + (.2 - u) * 2 ? 2 : 0;
+  }
+  return 0;
+}
+function fishSprite(T) {
+  if (T.spr) return T.spr;
+  const L = T.len, h = Math.max(5, Math.round(L * T.ratio)), pad = T.pad || 1, cw = L + pad * 2, ch = h + pad * 2;
+  const shape = T.shape || 'fish';
+  const U = x => (x - pad + 0.5) / L, V = y => (y - pad + 0.5) / h;
+  const reg = new Uint8Array(cw * ch);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+    const u = U(x), v = V(y);
+    let r = 0;
+    if (shape !== 'fish') r = shapeRegion(shape, u, v, x, y);
+    else if (inE(u, v, .57, .5, .41, .44)) r = 1;
+    else if (u >= 0 && u < .24 && Math.abs(v - .5) <= .08 + (.24 - u) * 1.9) r = 2;
+    else if (v < .32 && inE(u, v, .55, .12, .14, .14)) r = 2;
+    else if (v > .7 && inE(u, v, .5, .92, .08, .1)) r = 2;
+    reg[y * cw + x] = r;
+  }
+  const at = (x, y) => (x < 0 || y < 0 || x >= cw || y >= ch) ? 0 : reg[y * cw + x];
+  const pb = pixbuf(cw, ch);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+    const r = at(x, y);
+    const solid = (a, b) => { const q = at(a, b); return q > 0 && q !== 5; };
+    if (!r) { if (solid(x + 1, y) || solid(x - 1, y) || solid(x, y + 1) || solid(x, y - 1)) pb.put(x, y, T.ol); continue; }
+    if (r === 5) { pb.put(x, y, T.spike); continue; }
+    const u = U(x), v = V(y);
+    let c;
+    if (r === 2) c = T.fin;
+    else if (r === 3) c = T.bill;
+    else {
+      c = v < .40 ? T.back : v > .64 ? T.belly : T.body;
+      if (T.stripes && v < .48 && u > .25 && u < .9 && Math.floor((x + Math.round(Math.sin(y * 1.3))) / 2) % 2 === 0) c = T.stripes;
+      if (T.spots && v < .6 && hash(x, y * 3 + L) < .18) c = T.spots;
+      if (T.stripe2 && Math.abs(v - .56) < .09) c = T.stripe2;
+      if (T.bands) for (const bu of [.36, .68]) { const d = Math.abs(u - bu); if (d < .06) c = T.bands; else if (d < .1) c = T.ol; }
+      if (x === Math.round(pad + .74 * L) && Math.abs(v - .5) < .28) c = mix(c, '#000000', .35);
+    }
+    if (!at(x, y - 1)) c = mix(c, '#ffffff', .35);
+    else if (!at(x, y + 1)) c = mix(c, '#000000', .25);
+    pb.put(x, y, c);
+  }
+  for (const [eu, ev] of T.eyes || [[.84, .40]]) {
+    const ex = Math.round(pad + eu * L - .5), ey = Math.round(pad + ev * h - .5);
+    if (L >= 20 || T.bigEye) {
+      pb.put(ex, ey, '#0c0c10'); pb.put(ex + 1, ey, '#0c0c10'); pb.put(ex, ey + 1, '#0c0c10'); pb.put(ex + 1, ey + 1, '#0c0c10');
+      pb.put(ex, ey, '#f4f4f4');
+    } else pb.put(ex, ey, '#0c0c10');
+  }
+  if (shape === 'angler') {
+    // toothy jaw and the glowing lure on its stalk
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+      const v = V(y), d = U(x) - .7;
+      if (at(x, y) === 1 && d > 0 && v > .58 && v < .58 + d * 1.1) pb.put(x, y, Math.abs(v - .6) < .06 && x % 2 === 0 ? '#f4f0e0' : '#1a0e14');
+    }
+    const p0 = [pad + .6 * L, pad + .1 * h], p1 = [pad + .82 * L, 1], p2 = [Math.round(pad + .97 * L), 2];
+    bresenham(p0[0], p0[1], p1[0], p1[1], (x, y) => pb.put(x, y, T.fin));
+    bresenham(p1[0], p1[1], p2[0], p2[1], (x, y) => pb.put(x, y, T.fin));
+    pb.put(p2[0], p2[1], '#fff27a'); pb.put(p2[0] + 1, p2[1], '#ffffff'); pb.put(p2[0], p2[1] + 1, '#fff27a'); pb.put(p2[0] + 1, p2[1] + 1, '#fff27a');
+  } else if (shape !== 'sword') pb.put(pad + L - 1, Math.round(pad + .58 * h), T.ol);
+  T.spr = { c: pb.done(), pad, L, h };
+  return T.spr;
+}
+
+// recolour a sprite into a flat silhouette (journal entries not yet caught, hit flashes)
+const tintCache = new Map();
+function tinted(c, col) {
+  let m = tintCache.get(c);
+  if (!m) { m = new Map(); tintCache.set(c, m); }
+  if (m.has(col)) return m.get(col);
+  const o = makeCanvas(c.width, c.height), x = o.getContext('2d');
+  x.drawImage(c, 0, 0); x.globalCompositeOperation = 'source-atop'; x.fillStyle = col; x.fillRect(0, 0, c.width, c.height);
+  m.set(col, o);
+  return o;
+}
+
+// ================= shark =================
+const SHK = { back: '#56697e', body: '#7d91a4', belly: '#dde5eb', fin: '#4a5c70', ol: '#1a222c' };
+const sharkSprs = {};
+const PUP = { name: 'SHARK PUP', len: 22, ratio: .36, back: SHK.back, body: SHK.body, belly: SHK.belly, fin: SHK.fin, ol: SHK.ol, shape: 'pup', eyes: [[.84, .42]] };
+function sharkSprite(open) {
+  const key = open ? 'open' : 'closed';
+  if (sharkSprs[key]) return sharkSprs[key];
+  const L = 84, h = 30, pad = 2, cw = L + pad * 2, ch = h + pad * 2;
+  const U = x => (x - pad + .5) / L, V = y => (y - pad + .5) / h;
+  const tri = (u, v, ax, ay, bx, by, cx, cy) => {
+    const d1 = (u - bx) * (ay - by) - (ax - bx) * (v - by), d2 = (u - cx) * (by - cy) - (bx - cx) * (v - cy), d3 = (u - ax) * (cy - ay) - (cx - ax) * (v - ay);
+    return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+  };
+  const reg = new Uint8Array(cw * ch);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+    const u = U(x), v = V(y);
+    let r = 0;
+    if (inE(u, v, .55, .56, .37, .25) || inE(u, v, .88, .6, .12, .17) || (u > .13 && u < .24 && Math.abs(v - .56) < .09)) r = 1; // body, snout, tail stem
+    else if (tri(u, v, .40, .34, .47, .04, .63, .34) || tri(u, v, .16, .56, .0, .08, .14, .7) || tri(u, v, .16, .6, .04, .9, .2, .66)
+      || tri(u, v, .24, .4, .19, .3, .3, .42) || tri(u, v, .6, .74, .5, .99, .72, .8)) r = 2;                     // dorsal, tail lobes, second dorsal, pectoral
+    if (open && u > .85) { // jaws apart: 6 is a small notch of a mouth at the snout tip, 7 the slim lower jaw angled down
+      const top = .62 - Math.max(0, u - .88) * .3, bottom = .64 + Math.max(0, u - .88) * 1.1;
+      if (r === 1 && u > .88 && v > top && v < bottom) r = 6;
+      else if (v >= bottom && inE(u, v, .92, .75, .07, .06)) r = 7; // a short, chunky wedge that ends at the snout tip
+    }
+    reg[y * cw + x] = r;
+  }
+  const at = (x, y) => (x < 0 || y < 0 || x >= cw || y >= ch) ? 0 : reg[y * cw + x];
+  const pb = pixbuf(cw, ch);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+    const r = at(x, y);
+    if (!r) { if (at(x + 1, y) || at(x - 1, y) || at(x, y + 1) || at(x, y - 1)) pb.put(x, y, SHK.ol); continue; }
+    const u = U(x), v = V(y);
+    let c = r === 2 ? SHK.fin : r === 7 ? SHK.belly : v < .44 ? SHK.back : v > .66 ? SHK.belly : SHK.body;
+    if (r === 6) {
+      const top = .62 - (u - .88) * .3, bottom = .64 + (u - .88) * 1.1;
+      c = (v < top + .045 || v > bottom - .05) && x % 2 === 0 ? '#f6f6f2' : '#4a1420';          // teeth on both jaws, dark gullet
+      pb.put(x, y, c); continue;
+    }
+    if (r === 1 && u > .70 && u < .79 && (x - pad) % 3 === 0 && v > .46 && v < .64) c = SHK.ol; // gills
+    if (!open && r === 1 && u > .82 && u < .98 && Math.abs(v - .72) < .03) c = SHK.ol;         // mouth
+    if (!open && r === 1 && u > .83 && u < .97 && v > .74 && v < .78 && x % 2 === 0) c = '#f6f6f2'; // teeth
+    if (!at(x, y - 1)) c = mix(c, '#ffffff', .3); else if (!at(x, y + 1)) c = mix(c, '#000000', .25);
+    pb.put(x, y, c);
+  }
+  const ex = Math.round(pad + .80 * L), ey = Math.round(pad + .48 * h);
+  pb.put(ex, ey, '#0c0c10'); pb.put(ex + 1, ey, '#0c0c10'); pb.put(ex, ey + 1, '#0c0c10'); pb.put(ex + 1, ey + 1, '#0c0c10'); pb.put(ex + 1, ey, '#f4f4f4');
+  sharkSprs[key] = pb.done();
+  return sharkSprs[key];
+}
+
+// ================= static background =================
+const waterKeys = [[0, '#58bfdc'], [.25, '#3796c4'], [.55, '#1f5f95'], [1, '#0c2848']];
+function waterAt(f) {
+  for (let i = 1; i < waterKeys.length; i++) if (f <= waterKeys[i][0]) {
+    const [a, ca] = waterKeys[i - 1], [b, cb] = waterKeys[i];
+    return mix(ca, cb, (f - a) / (b - a));
+  }
+  return RGB(waterKeys[waterKeys.length - 1][1]);
+}
+function bands(c, y0, y1, cols, w = W) {
+  const n = cols.length, bh = (y1 - y0) / n;
+  for (let i = 0; i < n; i++) {
+    const ys = Math.round(y0 + i * bh), ye = Math.round(y0 + (i + 1) * bh);
+    c.fillStyle = hex(cols[i]); c.fillRect(0, ys, w, ye - ys);
+    if (i > 0) {
+      c.fillStyle = hex(cols[i - 1]);
+      for (let x = 0; x < w; x += 2) c.fillRect(x + (ys & 1), ys, 1, 1);
+      for (let x = 0; x < w; x += 4) c.fillRect(x + 1, ys + 1, 1, 1);
+    }
+  }
+}
+function iceUnderX(y) {
+  const d = y - SURF;
+  if (d < 0) return ICE_EDGE;
+  if (d > 78) return -1;
+  let x = ICE_EDGE - d * 0.35 + Math.round(Math.sin(d * 0.35) * 1.5);
+  if (d > 55) x -= (d - 55) * 4.5;
+  return x;
+}
+const iceTopAt = x => ICE_TOP + Math.round(Math.sin(x * .21) * .8 + Math.sin(x * .05 + 1) * .7);
+const bedAt = x => BED + Math.round(Math.sin(x * .07) * 3 + Math.sin(x * .23 + 2) * 1.2);
+
+function disc(c, cx, cy, r, col) {
+  c.fillStyle = col;
+  for (let y = -r; y <= r; y++) { const hw = Math.round(Math.sqrt(r * r - y * y)); c.fillRect(cx - hw, cy + y, hw * 2 + 1, 1); }
+}
+
+function paintSky(b, w = W) {
+  bands(b, 0, SURF + 2, ['#5aaee3', '#68b8e8', '#78c3ed', '#8acdf0', '#9dd7f3', '#b2e1f6', '#c8eaf8'], w);
+  disc(b, 62, 26, 12, '#d9eef8'); disc(b, 62, 26, 10, '#fff1b8'); disc(b, 62, 26, 8, '#fffbe6');
+  // distant ice mountains
+  for (let x = 0; x < w; x++) {
+    const h1 = Math.round(14 + Math.sin(x * .031 + 1) * 6 + Math.sin(x * .087) * 3 + Math.sin(x * .21));
+    b.fillStyle = '#cfe3ef'; b.fillRect(x, SURF + 1 - h1, 1, h1);
+    b.fillStyle = '#eef7fc'; b.fillRect(x, SURF + 1 - h1, 1, 1);
+    const h2 = Math.round(6 + Math.sin(x * .05 + 3) * 4 + Math.sin(x * .15) * 2);
+    b.fillStyle = '#aecde0'; b.fillRect(x, SURF + 1 - h2, 1, h2);
+    b.fillStyle = '#d9ebf5'; b.fillRect(x, SURF + 1 - h2, 1, 1);
+  }
+}
+function paintWater(b, w = W) {
+  const wc = []; for (let i = 0; i < 14; i++) wc.push(waterAt(i / 13));
+  bands(b, SURF + 2, BED + 20, wc, w);
+  return wc;
+}
+
+const bgIntact = makeCanvas(W, WORLD_H);
+let bg = bgIntact;
+(function buildBG() {
+  const b = bgIntact.getContext('2d');
+  paintSky(b);
+  paintWater(b);
+  // seabed
+  for (let x = 0; x < W; x++) {
+    const by = bedAt(x);
+    b.fillStyle = '#5d5843'; b.fillRect(x, by, 1, WORLD_H - by);
+    b.fillStyle = '#7c7558'; b.fillRect(x, by, 1, 2);
+    for (let y = by + 3; y < WORLD_H; y++) {
+      const hv = hash(x, y);
+      if (hv < .06) { b.fillStyle = '#4a4535'; b.fillRect(x, y, 1, 1); }
+      else if (hv > .97) { b.fillStyle = '#8f8768'; b.fillRect(x, y, 1, 1); }
+    }
+  }
+  for (let i = 0; i < 8; i++) { // rocks
+    const rx = 10 + i * 40 + rand(-10, 10), rw = rand(5, 11), rh = rand(4, 8), ry = bedAt(rx) + 2;
+    for (let y = -rh; y <= 0; y++) for (let x = -rw; x <= rw; x++) {
+      if ((x / rw) ** 2 + (y / rh) ** 2 > 1) continue;
+      const edge = ((x / rw) ** 2 + (y / rh) ** 2) > .7;
+      b.fillStyle = edge ? '#2f363e' : (y < -rh * .5 && x < 0 ? '#6b7682' : '#4b5560');
+      b.fillRect(Math.round(rx + x), Math.round(ry + y), 1, 1);
+    }
+  }
+  for (let i = 0; i < 5; i++) { // starfish
+    const sx = Math.round(rand(20, 300)), sy = bedAt(sx) + 4;
+    b.fillStyle = '#d8673a';
+    [[0, 0], [1, 0], [-1, 0], [0, -1], [0, 1], [2, -1], [-2, -1], [1, 2], [-1, 2], [0, -2]].forEach(([dx, dy]) => b.fillRect(sx + dx, sy + dy, 1, 1));
+    b.fillStyle = '#f2a060'; b.fillRect(sx, sy, 1, 1);
+  }
+  for (let i = 0; i < 10; i++) { // shells
+    const sx = Math.round(rand(5, 315)), sy = bedAt(sx) + Math.round(rand(3, 12));
+    b.fillStyle = '#e8d8c0'; b.fillRect(sx, sy, 2, 1); b.fillStyle = '#b8a890'; b.fillRect(sx, sy + 1, 2, 1);
+  }
+  // underwater part of the ice floe
+  for (let y = SURF + 2; y < SURF + 80; y++) {
+    const x = Math.round(iceUnderX(y));
+    if (x <= 0) continue;
+    const f = (y - SURF) / 80, water = waterAt((y - SURF) / (BED - SURF));
+    b.fillStyle = hex(mix('#86cbe2', water, f * .7)); b.fillRect(0, y, x, 1);
+    b.fillStyle = hex(mix('#c4ecf8', water, f * .6)); b.fillRect(x - 1, y, 1, 1);
+    b.fillStyle = hex(mix('#72b6d0', water, f * .7));
+    for (let xx = 0; xx < x - 3; xx++) if (hash(xx >> 2, y >> 1) < .12) b.fillRect(xx, y, 1, 1);
+  }
+  // ice floe above water
+  for (let x = 0; x < ICE_EDGE; x++) {
+    const top = iceTopAt(x), edge = x >= ICE_EDGE - 4;
+    b.fillStyle = edge ? '#9fcde0' : '#bfe2f0'; b.fillRect(x, top, 1, SURF + 2 - top);
+    b.fillStyle = edge ? '#dff2fa' : '#f6fcff'; b.fillRect(x, top, 1, 3);
+    b.fillStyle = '#d8eef7'; b.fillRect(x, top + 3, 1, 1);
+    if (hash(x, 7) < .15) { b.fillStyle = '#a9d4e6'; b.fillRect(x, top + 5 + Math.round(hash(x, 3) * 2), 1, 1); }
+  }
+  b.fillStyle = '#e8f8ff'; b.fillRect(0, SURF + 1, ICE_EDGE, 1);
+  for (let i = 0; i < 4; i++) { // icicles
+    const ix = ICE_EDGE - 3 - i * 7, ln = 2 + (i % 2);
+    b.fillStyle = '#d8f0fa'; b.fillRect(ix, SURF + 2, 1, ln);
+  }
+})();
+
+// inside the berg: solid ice everywhere, with the water-filled cavern, the shaft she smashed and the shark's tunnel carved out
+const bgArena = makeCanvas(W, WORLD_H);
+(function buildArena() {
+  const b = bgArena.getContext('2d');
+  paintSky(b);
+  for (let x = 0; x < W; x++) {
+    const top = iceTopAt(x);
+    b.fillStyle = '#bfe2f0'; b.fillRect(x, top, 1, WORLD_H - top);
+    b.fillStyle = '#f6fcff'; b.fillRect(x, top, 1, 3);
+    b.fillStyle = '#d8eef7'; b.fillRect(x, top + 3, 1, 1);
+  }
+  // texture: speckles and a few cracks
+  b.fillStyle = '#a9d4e6';
+  for (let y = ICE_TOP + 6; y < WORLD_H; y += 2) for (let x = 0; x < W; x += 2) if (hash(x, y) < .07) b.fillRect(x, y, 2, 1);
+  for (let i = 0; i < 14; i++) {
+    const x0 = hash(i, 11) * W, y0 = ICE_TOP + 10 + hash(i, 12) * 330, ln = 8 + hash(i, 13) * 22, dir = hash(i, 14) < .5 ? 1 : -1;
+    bresenham(x0, y0, x0 + ln * dir, y0 + ln * .6, (x, y) => { b.fillStyle = '#8fc0d8'; b.fillRect(x, y, 1, 1); });
+  }
+  // carve the water with jagged edges
+  const water = new Uint8Array(W * WORLD_H);
+  const caveTop = x => AR.y0 + Math.round(Math.sin(x * .15) * 3 + Math.sin(x * .05) * 4);
+  const caveBot = x => AR.y1 - Math.round(Math.sin(x * .11 + 1) * 3 + Math.sin(x * .04) * 4);
+  const jag = y => Math.round(Math.sin(y * .3) * 2 + Math.sin(y * .07) * 3);
+  for (let y = ICE_TOP - 4; y < AR.y1 + 8; y++) for (let x = 0; x < W; x++) {
+    const inCave = y >= caveTop(x) && y <= caveBot(x) && x >= AR.x0 + jag(y) && x <= AR.x1 - jag(y + 50);
+    const inShaft = y < AR.y0 + 12 && y >= iceTopAt(x) && x >= SH0 + jag(y) && x <= SH1 - jag(y + 30);
+    const inTun = y >= TUN.y0 && y <= TUN.y1 && x >= AR.x1 - 10;
+    if (inCave || inShaft || inTun) water[y * W + x] = 1;
+  }
+  for (let y = ICE_TOP - 4; y < AR.y1 + 8; y++) for (let x = 0; x < W; x++) {
+    if (!water[y * W + x]) continue;
+    if (y < SURF + 1) { b.fillStyle = '#9fcde0'; b.fillRect(x, y, 1, 1); continue; } // back wall of the shaft above the water line
+    const f = Math.floor(clamp((y - SURF) / (AR.y1 - SURF), 0, 1) * 8) / 8;
+    b.fillStyle = hex(mix('#2f86b4', '#0d3a63', f));
+    if (x >= AR.x1 - 10 && y >= TUN.y0 && y <= TUN.y1) b.fillStyle = hex(mix('#0d3a63', '#04101e', clamp((x - AR.x1 + 10) / 24, 0, 1)));
+    b.fillRect(x, y, 1, 1);
+  }
+  // bright rim where ice meets water
+  for (let y = ICE_TOP - 4; y < AR.y1 + 8; y++) for (let x = 0; x < W; x++) {
+    if (water[y * W + x]) continue;
+    const near = (x > 0 && water[y * W + x - 1]) || (x < W - 1 && water[y * W + x + 1]) || water[(y - 1) * W + x] || water[(y + 1) * W + x];
+    if (near && y >= iceTopAt(x)) { b.fillStyle = y > SURF ? '#e8f8ff' : '#dff2fa'; b.fillRect(x, y, 1, 1); }
+  }
+  // icicles hanging from the cave ceiling
+  for (let i = 0; i < 9; i++) {
+    const x = AR.x0 + 20 + i * 30 + Math.round(hash(i, 21) * 12), ln = 4 + Math.round(hash(i, 22) * 8), top = caveTop(x);
+    if (water[(top - 1) * W + x] || water[(top - 1) * W + x - 2] || water[(top - 1) * W + x + 2]) continue; // no ceiling here (the shaft opens into the cave)
+    for (let d = 0; d < ln; d++) { const hw = Math.max(0, Math.round((1 - d / ln) * 2)); b.fillStyle = '#d8eef7'; b.fillRect(x - hw, top + d, hw * 2 + 1, 1); }
+    b.fillStyle = '#f6fcff'; b.fillRect(x - 2, top, 1, Math.max(1, ln - 3));
+  }
+})();
+
+// ================= the wide waters (free roam after the shark) =================
+const SWAMP_FISH = [
+  { name: 'MUDSKIPPER', len: 10, ratio: .4, dmin: 2, dmax: 30, speed: 14, str: .2, w: 6, back: '#6a5a3a', body: '#9a8a5a', belly: '#c8b890', fin: '#7a6a44', ol: '#2a2214', bigEye: true, eyes: [[.8, .3]] },
+  { name: 'CATFISH', len: 24, ratio: .36, dmin: 60, dmax: 160, speed: 12, str: .7, w: 4, back: '#4a4034', body: '#7a6a54', belly: '#b8a888', fin: '#5a4a3a', ol: '#1e1810', spots: '#3a3028' },
+  { name: 'GAR', len: 30, ratio: .2, dmin: 20, dmax: 120, speed: 24, str: .9, w: 3, back: '#4a6a3a', body: '#8aa06a', belly: '#d0d8a8', fin: '#5a7a44', ol: '#1e2a14', spots: '#2e4020', shape: 'sword', bill: '#7a8a5a', pad: 2, eyes: [[.74, .42]] },
+  { name: 'SNAKEHEAD', len: 26, ratio: .22, dmin: 30, dmax: 150, speed: 18, str: .85, w: 3, back: '#3a3a2a', body: '#5a5a3a', belly: '#9a9a6a', fin: '#4a4a30', ol: '#141410', shape: 'eel', stripes: '#2a2a1a', eyes: [[.93, .36]] },
+  { name: 'AXOLOTL', len: 14, ratio: .42, dmin: 40, dmax: 160, speed: 10, str: .3, w: 2.5, back: '#e89ab0', body: '#f4b8c8', belly: '#fde0e8', fin: '#e07a98', ol: '#5a2838', bigEye: true, eyes: [[.82, .36]], rare: true },
+];
+const BAIKAL_FISH = [
+  { name: 'OMUL', len: 20, ratio: .32, dmin: 10, dmax: 200, speed: 26, str: .55, w: 6, back: '#4a7a9a', body: '#a8c8d8', belly: '#eef6fa', fin: '#6a9ab0', ol: '#1e3a4a' },
+  { name: 'GRAYLING', len: 18, ratio: .36, dmin: 10, dmax: 120, speed: 22, str: .5, w: 5, back: '#6a5a8a', body: '#a898b8', belly: '#e8e0f0', fin: '#8a6ab0', ol: '#2a2238', spots: '#3a2a4a', shape: 'pup', eyes: [[.84, .42]] },
+  { name: 'GOLOMYANKA', len: 16, ratio: .28, dmin: 200, dmax: 540, speed: 12, str: .3, w: 4, back: '#c8b0c8', body: '#e8d0e0', belly: '#f8f0f8', fin: '#d8b8d8', ol: '#6a5070', bigEye: true, eyes: [[.82, .4]] },
+  { name: 'BAIKAL STURGEON', len: 36, ratio: .3, dmin: 300, dmax: 540, speed: 14, str: 1.2, w: 2, back: '#5a5a50', body: '#8a8a78', belly: '#c8c8b0', fin: '#6a6a5a', ol: '#202018', spots: '#3a3a30', rare: true },
+];
+const MARIANA_FISH = [
+  { name: 'VIPERFISH', len: 22, ratio: .28, dmin: 300, dmax: 900, speed: 20, str: .8, w: 4, back: '#1a2a4a', body: '#2a3a5a', belly: '#4a5a7a', fin: '#1a2a40', ol: '#060a14', shape: 'angler', pad: 3, eyes: [[.66, .34]], lure: true },
+  { name: 'BARRELEYE', len: 14, ratio: .5, dmin: 400, dmax: 800, speed: 10, str: .3, w: 3, back: '#2a5a4a', body: '#4a8a6a', belly: '#9ad0b0', fin: '#3a7a5a', ol: '#0a2018', shape: 'puffer', pad: 2, bigEye: true, eyes: [[.7, .3]], spike: '#4a8a6a' },
+  { name: 'GULPER EEL', len: 34, ratio: .16, dmin: 600, dmax: 1200, speed: 12, str: 1.0, w: 3, back: '#101018', body: '#202030', belly: '#383850', fin: '#181828', ol: '#000004', shape: 'eel', eyes: [[.93, .36]] },
+  { name: 'SNAILFISH', len: 16, ratio: .3, dmin: 900, dmax: 1250, speed: 9, str: .3, w: 4, back: '#d0a8c0', body: '#ecc8dc', belly: '#fae8f0', fin: '#d8b0c8', ol: '#60405a', bigEye: true, eyes: [[.82, .4]] },
+  { name: 'DUMBO OCTOPUS', len: 14, ratio: .7, dmin: 700, dmax: 1250, speed: 8, str: .3, w: 2.5, back: '#c04858', body: '#e07080', belly: '#f0a0b0', fin: '#d06070', ol: '#501820', shape: 'puffer', pad: 2, spike: '#e07080', bigEye: true, eyes: [[.78, .36]], rare: true },
+  { name: 'GIANT ISOPOD', len: 18, ratio: .5, dmin: 1230, dmax: 1250, speed: 5, str: .5, w: 2, back: '#8a8a90', body: '#a8a8b0', belly: '#c8c8d0', fin: '#7a7a80', ol: '#303038', shape: 'flat', stripes: '#6a6a70', eyes: [[.82, .26], [.72, .2]] },
+];
+// hostile fish: they patrol a haunt, chase her when she comes close and bite; she can eat one head-on once she is heavy enough
+const SWAMP_HOSTILE = [
+  { name: 'ALLIGATOR', len: 44, ratio: .2, dmin: 0, dmax: 60, speed: 36, str: 1, w: 0, back: '#3a5a2a', body: '#5a7a3a', belly: '#a8b080', fin: '#4a6a30', ol: '#14200c', stripes: '#2a4420', shape: 'sword', bill: '#5a7a3a', pad: 2, eyes: [[.72, .3]], bite: 4, cd: 2, minEat: 80, aggro: 140, count: 2, hostile: true },
+  { name: 'PIRANHA', len: 9, ratio: .5, dmin: 20, dmax: 150, speed: 64, str: .3, w: 0, back: '#7a3a3a', body: '#b85a5a', belly: '#d0c0a0', fin: '#8a3a3a', ol: '#301010', bite: 1.2, cd: 1.6, minEat: 0, aggro: 110, count: 4, hostile: true },
+];
+const BAIKAL_HOSTILE = [
+  { name: 'PIKE', len: 34, ratio: .22, dmin: 10, dmax: 160, speed: 58, str: 1, w: 0, back: '#3a5a3a', body: '#6a8a5a', belly: '#c8d0a8', fin: '#4a6a40', ol: '#18281a', spots: '#8aa070', shape: 'sword', bill: '#6a8a5a', pad: 2, eyes: [[.74, .4]], bite: 3, cd: 2, minEat: 55, aggro: 130, count: 2, hostile: true },
+];
+const MARIANA_HOSTILE = [
+  { name: 'GOBLIN SHARK', len: 52, ratio: .24, dmin: 500, dmax: 1200, speed: 46, str: 1.3, w: 0, back: '#8a6a78', body: '#b890a0', belly: '#e0c8d0', fin: '#7a5a68', ol: '#301820', shape: 'sword', bill: '#c8a0a8', pad: 2, eyes: [[.7, .42]], bite: 5, cd: 2.2, minEat: 85, aggro: 150, count: 2, hostile: true },
+  { name: 'FANGTOOTH', len: 12, ratio: .5, dmin: 600, dmax: 1200, speed: 42, str: .4, w: 0, back: '#202028', body: '#303040', belly: '#484858', fin: '#282838', ol: '#08080c', bigEye: true, eyes: [[.78, .34]], bite: 1.5, cd: 1.5, minEat: 0, aggro: 100, count: 3, hostile: true },
+];
+// biomes laid out west to east; each has its own depth, bed, fish and look (canvases are built on first visit)
+// neighbouring biomes overlap by OV px and crossfade there, and their beds and darkness blend across the seam
+const OV = 96, ZH = 1400;
+const ZONES = [
+  { id: 'arctic', name: 'ARCTIC SEA', x0: 0, w: W, bed: bedAt, fish: FISH, hostile: [], surf: '#58bfdc', dark: .28, c: null },
+  { id: 'swamp', name: 'THE SWAMP', x0: W, w: 640, bed: x => 268 + Math.round(Math.sin(x * .05) * 4 + Math.sin(x * .13) * 2), fish: SWAMP_FISH, hostile: SWAMP_HOSTILE, surf: '#5f8a4a', dark: .45, c: null },
+  { id: 'baikal', name: 'LAKE BAIKAL', x0: W + 640, w: 640, bed: x => 660 + Math.round(Math.sin(x * .04) * 6 + Math.sin(x * .17) * 2), fish: BAIKAL_FISH, hostile: BAIKAL_HOSTILE, surf: '#3fb0d8', dark: .3, c: null },
+  { id: 'mariana', name: 'MARIANA TRENCH', x0: W + 1280, w: 640, bed: x => 1356 + Math.round(Math.sin(x * .03) * 8 + Math.sin(x * .11) * 3), fish: MARIANA_FISH, hostile: MARIANA_HOSTILE, surf: '#1b5a86', dark: .8, c: null },
+];
+ZONES.forEach(z => { z.ox = z.x0 === 0 ? 0 : z.x0 - OV; });
+const ROAM_W = W + 1920;
+const zoneAt = x => ZONES.find(z => x >= z.x0 && x < z.x0 + z.w) || ZONES[ZONES.length - 1];
+const zoneSpecies = z => z.fish.concat(z.hostile);
+const smooth = v => v * v * (3 - 2 * v);
+function roamBlend(x, f) {
+  const z = zoneAt(x), i = ZONES.indexOf(z), R = ZONES[i + 1], L = ZONES[i - 1];
+  if (R && x > R.x0 - OV) return lerp(f(z, x), f(R, x), smooth((x - (R.x0 - OV)) / (2 * OV)));
+  if (L && x < z.x0 + OV) return lerp(f(L, x), f(z, x), smooth((x - (z.x0 - OV)) / (2 * OV)));
+  return f(z, x);
+}
+const roamBed = x => roamBlend(x, (z, xx) => z.bed(xx)), roamDark = x => roamBlend(x, z => z.dark);
+function buildZone(z) {
+  if (z.c) return z.c;
+  const cw = z.w + (z.ox < z.x0 ? 2 * OV : OV), c = makeCanvas(cw, ZH), b = c.getContext('2d'), w = cw, h = ZH, ox = z.ox, bed = lx => roamBed(ox + lx);
+  const waterTo = wc => { const yb = z.bed(z.x0 + z.w / 2) + 10; bands(b, SURF + 2, yb, wc, w); b.fillStyle = hex(wc[wc.length - 1]); b.fillRect(0, yb, w, h - yb); };
+  const paintBed = (col, top, dark, light) => {
+    for (let x = 0; x < w; x++) {
+      const by = bed(x);
+      b.fillStyle = col; b.fillRect(x, by, 1, h - by); b.fillStyle = top; b.fillRect(x, by, 1, 2);
+      for (let y = by + 3; y < h; y++) { const hv = hash(x + z.x0, y); if (hv < .05) { b.fillStyle = dark; b.fillRect(x, y, 1, 1); } else if (hv > .975) { b.fillStyle = light; b.fillRect(x, y, 1, 1); } }
+    }
+  };
+  if (z.id === 'arctic') {
+    paintSky(b, w);
+    const wc = paintWater(b, w);
+    b.fillStyle = hex(wc[wc.length - 1]); b.fillRect(0, BED + 20, w, h - BED - 20);
+    paintBed('#5d5843', '#7c7558', '#4a4535', '#8f8768');
+    b.drawImage(bgIntact, 0, 0, ICE_EDGE + 2, SURF + 82, 0, 0, ICE_EDGE + 2, SURF + 82); // her floe
+  } else if (z.id === 'swamp') {
+    bands(b, 0, SURF + 2, ['#8a9a6a', '#98a878', '#a8b486', '#b6bf94', '#c4c8a0'], w);
+    for (let i = 0; i < 26; i++) { // dead trees on the far bank
+      const x = Math.round(hash(i, 31) * w), th = 14 + Math.round(hash(i, 32) * 30);
+      b.fillStyle = '#5a5a44'; b.fillRect(x, SURF + 1 - th, 2, th);
+      for (let k = 1; k < 4; k++) { const by = SURF + 1 - th + k * 5, d = k % 2 ? 1 : -1; bresenham(x, by, x + d * (3 + k), by - 4, (px, py) => b.fillRect(px, py, 1, 1)); }
+    }
+    const wc = []; for (let i = 0; i < 8; i++) wc.push(mix('#4f7a3f', '#182814', i / 7));
+    waterTo(wc);
+    paintBed('#3a2e1c', '#5a4a2c', '#2a2014', '#6a5a3a');
+    for (let i = 0; i < 2; i++) { // sunken trunks
+      const x = OV + 170 + i * 300, top = SURF - 24, bh = bed(x) - top; // well inside the biome, clear of the seams
+      b.fillStyle = '#2e2418'; b.fillRect(x - 4, top, 9, bh); b.fillStyle = '#4a3a28'; b.fillRect(x - 3, top, 7, bh); b.fillStyle = '#5e4c36'; b.fillRect(x - 3, top, 2, bh);
+      b.fillStyle = '#4a3a28';
+      bresenham(x + 3, top + 8, x + 16, top - 2, (px, py) => b.fillRect(px, py, 2, 2));
+      bresenham(x - 3, top + 16, x - 14, top + 6, (px, py) => b.fillRect(px, py, 2, 2));
+    }
+    for (let i = 0; i < 40; i++) { // reeds poking out of the water
+      const x = Math.round(hash(i, 33) * w), up = 10 + Math.round(hash(i, 34) * 16);
+      b.fillStyle = hash(i, 35) < .5 ? '#3f6b2a' : '#4f7f34'; b.fillRect(x, SURF - up, 1, up + 26);
+      b.fillStyle = '#6a4a2a'; b.fillRect(x, SURF - up, 1, 3);
+    }
+    for (let i = 0; i < 18; i++) { // lily pads
+      const x = Math.round(hash(i, 36) * w), r = 2 + Math.round(hash(i, 37) * 3);
+      disc(b, x, SURF, r, '#4f9a3a'); b.fillStyle = '#386e28'; b.fillRect(x + 1, SURF - r, 1, r);
+      if (hash(i, 38) < .3) { b.fillStyle = '#f0a0c0'; b.fillRect(x - 1, SURF - 1, 2, 1); b.fillStyle = '#ffe070'; b.fillRect(x - 1, SURF - 2, 1, 1); }
+    }
+  } else if (z.id === 'baikal') {
+    bands(b, 0, SURF + 2, ['#5aaee3', '#6fb8e8', '#86c6ee', '#a0d4f2', '#bde2f6', '#d6edf9'], w);
+    for (let x = 0; x < w; x++) { // snowy mountains and a pine shore
+      const h1 = Math.round(26 + Math.sin(x * .02 + 2) * 14 + Math.sin(x * .07) * 6 + Math.sin(x * .19) * 2);
+      b.fillStyle = '#8aa3b8'; b.fillRect(x, SURF + 1 - h1, 1, h1);
+      b.fillStyle = '#f0f6fa'; b.fillRect(x, SURF + 1 - h1, 1, Math.max(2, Math.round(h1 * .3)));
+      b.fillStyle = '#3f6a3a'; b.fillRect(x, SURF - 4, 1, 5);
+      if (hash(x, 41) < .12) { b.fillStyle = '#2f5a2a'; b.fillRect(x, SURF - 8 - Math.round(hash(x, 42) * 5), 1, 9); }
+    }
+    const wc = []; for (let i = 0; i < 14; i++) wc.push(mix('#3fb0d8', '#07213f', i / 13));
+    waterTo(wc);
+    paintBed('#4a5560', '#6a7a88', '#2f363e', '#8a98a8');
+    for (let i = 0; i < 12; i++) { const x = Math.round(hash(i, 43) * w), rw = 4 + Math.round(hash(i, 44) * 8); disc(b, x, bed(x) + 1, rw, '#2f363e'); disc(b, x, bed(x) + 1, Math.max(1, rw - 2), '#4b5560'); }
+    for (let i = 0; i < 10; i++) { const x = Math.round(hash(i, 46) * w), cw2 = 4 + Math.round(hash(i, 47) * 8); b.fillStyle = '#f6fcff'; b.fillRect(x, SURF - 2, cw2, 3); b.fillStyle = '#bfe2f0'; b.fillRect(x, SURF + 1, cw2, 1); }
+  } else if (z.id === 'mariana') {
+    bands(b, 0, SURF + 2, ['#4a5a70', '#566680', '#62728e', '#6e7e9c', '#7a8aa8'], w);
+    const wc = []; for (let i = 0; i < 18; i++) wc.push(mix('#1b5a86', '#020408', Math.min(1, i / 12)));
+    waterTo(wc);
+    paintBed('#1a1c26', '#2c3040', '#101218', '#303448');
+    for (let y = SURF + 120; y < h; y++) { // the trench walls close in with depth
+      const ww = Math.round((y - SURF - 120) * .11 + Math.sin(y * .05) * 4 + Math.sin(y * .013) * 8);
+      if (ww <= 0) continue;
+      b.fillStyle = '#1a1c26'; b.fillRect(0, y, ww, 1); b.fillRect(w - ww, y, ww, 1);
+      b.fillStyle = '#2c3040'; b.fillRect(ww - 1, y, 1, 1); b.fillRect(w - ww, y, 1, 1);
+    }
+    for (let i = 0; i < 3; i++) { // black smokers
+      const x = 200 + i * 120, vh = 20 + i * 8, by = bed(x);
+      for (let d = 0; d < vh; d++) { const hw = 2 + Math.round((d / vh) * 6); b.fillStyle = d % 5 ? '#2a2630' : '#3a3440'; b.fillRect(x - hw, by - vh + d, hw * 2, 1); }
+      b.fillStyle = '#ff6a3a'; b.fillRect(x - 1, by - vh - 1, 3, 2); b.fillStyle = '#ffd080'; b.fillRect(x, by - vh - 1, 1, 1);
+    }
+    for (let i = 0; i < 160; i++) { // bioluminescent plankton
+      const x = Math.round(hash(i, 51) * w), y = SURF + 350 + Math.round(hash(i, 52) * (h - SURF - 380));
+      b.fillStyle = hash(i, 53) < .5 ? '#6fd6ff' : '#b0ffd0'; b.fillRect(x, y, 1, 1);
+    }
+  }
+  return z.c = c;
+}
+
+// depth darkening applied on top of fish
+const shade = makeCanvas(W, WORLD_H);
+(function buildShade() {
+  const s = shade.getContext('2d');
+  for (let y = SURF + 2; y < WORLD_H; y++) {
+    const a = Math.floor(clamp((y - SURF) / (BED - SURF), 0, 1) * 5) / 5 * 0.28;
+    if (a <= 0) continue;
+    s.fillStyle = `rgba(3,8,22,${a})`; s.fillRect(0, y, W, 1);
+  }
+})();
+
+function makeCloud() {
+  const w = Math.round(rand(26, 44)), h = 13, puffs = [];
+  for (let i = 0; i < 5; i++) puffs.push([rand(6, w - 6), rand(6, 8), rand(3, 5.5)]);
+  const inside = (x, y) => puffs.some(([cx, cy, r]) => Math.hypot(x + .5 - cx, y + .5 - cy) <= r) && y < 11;
+  const pb = pixbuf(w, h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (inside(x, y)) pb.put(x, y, inside(x, y + 2) ? '#ffffff' : '#d6e8f4');
+  return pb.done();
+}
+const clouds = [0, 1, 2, 3].map(i => ({ c: makeCloud(), x: i * 90 + rand(0, 40), y: Math.round(rand(6, 42)), v: rand(2, 5) }));
+const kelps = Array.from({ length: 11 }, (_, i) => ({ x: Math.round(14 + i * 28 + rand(-8, 8)), h: Math.round(rand(30, 105)), ph: rand(0, 6) }));
+const flakes = Array.from({ length: 40 }, () => ({ x: rand(0, W), y: rand(-10, SURF), v: rand(6, 14), ph: rand(0, 6) }));
+const surfaceAt = x => SURF + Math.round(Math.sin(x * .12 + t * 2) * .9 + Math.sin(x * .05 - t * 1.3) * .7);
+
+// ================= game state =================
+const seal = { size: START_SIZE, disp: START_SIZE, blinkT: 3, blink: 0, chew: 0, jump: 0 };
+const hook = { x: 160, y: 76, vx: 0, vy: 0, stun: 0 };
+let fishes = [], jellies = [], flights = [], parts = [], pops = [], bubbles = [];
+let hooked = null, tension = 0, bobDip = 0, wasUnder = false;
+let state = 'title', paused = false, deadT = 0, ghost = null;
+let caught = 0, biggest = null, peak = START_SIZE, elapsed = 0, t = 0, camY = 0, reelTick = 0, megaShown = false;
+let hintDone = false;
+let journalOpen = false, smashing = false, swim = null, shark = null, minions = [], iceChunks = [], shake = 0, bossT = 0, wonT = 0;
+let camX = 0, travelOpen = false, travelSel = 0, journalPage = 0, nerpas = [], hostiles = [], curZone = null, roamT = 0;
+let CY = 0;
+
+// fish journal: species name -> times caught, kept across games
+function loadJournal() { try { return JSON.parse(localStorage.getItem('foka-journal')) || {}; } catch (e) { return {}; } }
+const journal = loadJournal();
+const journalCount = () => FISH.filter(T => journal[T.name]).length;
+function saveJournal() { try { localStorage.setItem('foka-journal', JSON.stringify(journal)); } catch (e) { /* storage unavailable */ } }
+const bossReady = () => state === 'play' && !iceBroken && !smashing && journalCount() >= FISH.length;
+const journalTotal = () => ZONES.reduce((n, z) => n + zoneSpecies(z).filter(T => journal[T.name]).length, 0);
+const speciesTotal = () => ZONES.reduce((n, z) => n + zoneSpecies(z).length, 0);
+const swimming = () => iceBroken || state === 'roam';
+const myPal = () => best.skin === 'baikal' ? NERPA_PAL : SEAL_PAL;
+
+function loadBest() { try { return JSON.parse(localStorage.getItem('foka-best')) || { fish: 0, kg: 0, sharks: 0 }; } catch (e) { return { fish: 0, kg: 0, sharks: 0 }; } }
+function saveBest() {
+  best.fish = Math.max(best.fish, caught); best.kg = Math.max(best.kg, kg(peak));
+  try { localStorage.setItem('foka-best', JSON.stringify(best)); } catch (e) { /* storage unavailable */ }
+}
+let best = loadBest();
+const kg = s => Math.round(32 * (s / START_SIZE) ** 2);
+
+// celebratory hop with a backflip; the angle snaps to 16 steps so the spin reads as pixel-art frames
+function sealJump() {
+  if (seal.jump <= 0) return { dy: 0, ang: 0 };
+  const p = 1 - seal.jump / (seal.jumpDur || JUMP_DUR), w = Math.max(10, Math.round(seal.disp));
+  const s = clamp((p - .12) / .7, 0, 1), e = s * s * (3 - 2 * s);
+  return { dy: -Math.round(Math.sin(p * Math.PI) * (10 + w * .35) * (smashing ? 2.2 : 1)), ang: -Math.round(e * 16) * Math.PI / 8 };
+}
+function sealGeo() {
+  const w = Math.max(10, Math.round(seal.disp)), h = Math.round(w * .78);
+  if (swimming() && swim) { // swimming: centred on her position, mouth on the side she faces
+    const left = swim.x - w / 2, top = swim.y - h / 2;
+    return { w, h, left, top, mx: swim.dir < 0 ? left + .06 * w : left + .94 * w, my: top + .51 * h, bx: left + .60 * w, by: top + .86 * h };
+  }
+  const left = SEAL_RIGHT - w, top = ICE_TOP + 2 - h + sealJump().dy;
+  return { w, h, left, top, mx: left + .94 * w, my: top + .51 * h, bx: left + .60 * w, by: top + .86 * h };
+}
+function rodGeo(g, spin) {
+  const L = 38 + g.w * .28, a = -.82;
+  const tx = g.bx + Math.cos(a) * L, ty = g.by + Math.sin(a) * L;
+  const bend = tension * 7 + (hooked ? 2 : 0), dx = hook.x - tx, dy = hook.y - ty, dd = Math.hypot(dx, dy) || 1;
+  const r = { bx: g.bx, by: g.by, cx: g.bx + (tx - g.bx) * .55, cy: g.by + (ty - g.by) * .55, tx: tx + dx / dd * bend, ty: ty + dy / dd * bend };
+  // when drawing, the rod spins along with the seal
+  const ang = spin ? sealJump().ang : 0;
+  if (ang) {
+    const ox = g.left + g.w / 2, oy = g.top + g.h / 2, c = Math.cos(ang), s = Math.sin(ang);
+    for (const [kx, ky] of [['bx', 'by'], ['cx', 'cy'], ['tx', 'ty']]) {
+      const x = r[kx] - ox, y = r[ky] - oy;
+      r[kx] = ox + x * c - y * s; r[ky] = oy + x * s + y * c;
+    }
+  }
+  return r;
+}
+
+function spawnFish(initial) {
+  const pool = state === 'roam' && curZone ? curZone.fish : FISH;
+  let tot = 0; for (const f of pool) tot += f.w;
+  let r = Math.random() * tot, T = pool[0];
+  for (const f of pool) { if ((r -= f.w) < 0) { T = f; break; } }
+  let y = SURF + rand(T.dmin, T.dmax), dir = Math.random() < .5 ? 1 : -1, x;
+  if (state === 'roam' && curZone) { // somewhere in this biome, out of her sight
+    const z = curZone;
+    x = z.x0 + rand(20, z.w - 20);
+    if (!initial && Math.abs(x - swim.x) < 200) x = x < swim.x ? Math.max(z.x0 + 10, swim.x - rand(200, 300)) : Math.min(z.x0 + z.w - 10, swim.x + rand(200, 300));
+    y = clamp(y, SURF + 8, roamBed(x) - 10);
+    if (z.id === 'arctic' && x < iceUnderX(y) + T.len) x = ICE_EDGE + 10 + rand(0, 40);
+  } else if (iceBroken) { // inside the cavern: anywhere in the water, away from the seal
+    y = rand(AR.y0 + 10, AR.y1 - 10);
+    x = rand(AR.x0 + 20, AR.x1 - 20);
+    if (swim && Math.abs(x - swim.x) < 40) x = x < swim.x ? AR.x0 + 20 : AR.x1 - 20;
+  } else {
+    if (iceUnderX(y) > 0 && dir === 1 && !initial) dir = -1;
+    x = initial ? rand(Math.max(iceUnderX(y) + T.len, 10), 310) : (dir === 1 ? -T.len - 4 : W + T.len + 4);
+  }
+  fishes.push({ T, x, y, baseY: y, dir, spd: T.speed * rand(.75, 1.2), ph: rand(0, 6.28), state: 'swim', interest: 0, fleeT: 0, turnT: rand(3, 9), thrash: 0, rest: 1, stamina: 1, pdx: 1, pdy: 1 });
+}
+function spawnJelly() { jellies.push({ x: rand(150, 300), y: SURF + rand(60, 340), ph: rand(0, 6), vx: rand(-3, 3), cool: 0 }); }
+
+function reset() {
+  iceBroken = false; smashing = false; swim = null; shark = null; minions = []; iceChunks = []; shake = 0; bossT = 0; wonT = 0; bg = bgIntact;
+  camX = 0; travelOpen = false; nerpas = []; hostiles = []; curZone = null; roamT = 0;
+  seal.size = seal.disp = START_SIZE; seal.chew = 0; seal.jump = 0;
+  hooked = null; tension = 0; flights = []; parts = []; pops = []; bubbles = [];
+  caught = 0; biggest = null; peak = START_SIZE; elapsed = 0; megaShown = false; hintDone = false;
+  fishes = []; for (let i = 0; i < 16; i++) spawnFish(true);
+  jellies = []; for (let i = 0; i < 3; i++) spawnJelly();
+  const r = rodGeo(sealGeo());
+  hook.x = r.tx + 14; hook.y = r.ty + 20; hook.vx = hook.vy = 0; hook.stun = 0;
+  ghost = null;
+}
+
+function pop(x, y, s, col, delay = 0) { return { x, y, s, col, life: 1.5, max: 1.5, delay }; }
+function splash(x, y, n) {
+  for (let i = 0; i < n; i++) parts.push({ x: x + rand(-3, 3), y, vx: rand(-40, 40), vy: rand(-90, -30), g: 240, life: rand(.5, .9), col: Math.random() < .5 ? '#e8f8ff' : '#9fd8ee', water: true });
+}
+function burst(x, y, n, cols, spd = 40) {
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, 6.28), s = rand(spd * .3, spd);
+    parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 20, g: 120, life: rand(.4, .8), col: cols[(Math.random() * cols.length) | 0] });
+  }
+}
+
+function bite(f) {
+  hooked = f; f.state = 'hooked'; f.thrash = 0; f.rest = rand(.4, 1); f.stamina = 1; tension = 0;
+  f.pdx = Math.random() < .7 ? 1 : -1; f.pdy = .5;
+  bobDip = .5; SFX.bite();
+  pops.push(pop(hook.x, hook.y - 12, '!', '#ffe14a'));
+  for (let i = 0; i < 4; i++) bubbles.push({ x: hook.x + rand(-3, 3), y: hook.y, r: Math.random() < .3 ? 2 : 1, ph: rand(0, 6) });
+}
+function scare(f) { f.state = 'flee'; f.fleeT = 1.3; f.dir = Math.sign(f.x - hook.x) || 1; f.interest = 0; }
+
+function snap(label) {
+  const f = hooked; if (!f) return;
+  hooked = null; f.state = 'flee'; f.fleeT = 2; f.dir = f.x > hook.x ? 1 : -1;
+  tension = 0;
+  seal.size -= 2 + f.T.len * .12;
+  pops.push(pop(hook.x, hook.y - 10, label, '#ff6a5a'));
+  pops.push(pop(hook.x, hook.y - 2, 'IT GOT AWAY', '#ffc0b0', .25));
+  burst(hook.x, hook.y, 8, ['#ffffff', '#ff8a6a']);
+  if (label === 'SNAP!') {
+    SFX.snap();
+    const r = rodGeo(sealGeo());
+    hook.x = Math.max(HOOK_MIN_X, r.tx + 8); hook.y = r.ty + 16; hook.vx = hook.vy = 0;
+  }
+}
+
+function catchFish() {
+  const f = hooked; hooked = null; tension = 0;
+  fishes.splice(fishes.indexOf(f), 1);
+  flights.push({ T: f.T, sx: hook.x, sy: hook.y, x: hook.x, y: hook.y, p: 0, dur: .75 + f.T.len * .01 });
+  splash(hook.x, SURF, 12); SFX.splash();
+  hook.y = SURF - 4; hook.vy = -10;
+}
+
+function eat(T) {
+  if (state !== 'play' && state !== 'boss' && state !== 'roam') return;
+  const before = kg(seal.size);
+  seal.size = Math.min(MAX_SIZE, seal.size + T.len * .42);
+  peak = Math.max(peak, seal.size);
+  caught++;
+  if (!biggest || T.len > biggest.len) biggest = T;
+  seal.chew = .5;
+  if (!swimming()) { seal.jump = seal.jumpDur = JUMP_DUR; tone(300, 760, .22, 'square', .04, .12); }
+  const g = sealGeo();
+  pops.push(pop(g.mx, Math.max(14, g.top - 6), T.name + '!', T.rare ? '#ffd84a' : '#ffffff'));
+  pops.push(pop(g.mx, Math.max(14, g.top - 6) + 8, '+' + Math.max(1, kg(seal.size) - before) + ' KG', '#9cff8a', .2));
+  burst(g.mx, g.my, 10, [T.body, T.back, '#ffffff']);
+  for (let i = 0; i < 3; i++) parts.push({ x: g.mx + rand(-6, 6), y: g.top, vx: rand(-8, 8), vy: rand(-30, -18), g: 0, life: 1.2, col: '#ff7aa0', heart: true });
+  if (T.rare) burst(g.mx, g.my, 14, ['#ffd84a', '#fff4b0'], 60);
+  SFX.chomp();
+  if (seal.size >= MAX_SIZE && !megaShown) { megaShown = true; pops.push(pop(g.mx, Math.max(14, g.top - 6) - 9, 'MEGA SEAL!', '#ffd84a', .4)); }
+  const isNew = !journal[T.name];
+  journal[T.name] = (journal[T.name] || 0) + 1; saveJournal();
+  if (isNew) {
+    const n = journalCount();
+    pops.push(pop(g.mx, Math.max(14, g.top - 6) - 9, n >= FISH.length ? 'JOURNAL COMPLETE!' : 'NEW IN JOURNAL ' + n + '/' + FISH.length, '#7ad8ff', .6));
+    tone(880, 1320, .12, 'square', .04, .6); tone(1320, 1760, .15, 'square', .04, .72);
+  }
+}
+
+function die() {
+  state = 'dead'; deadT = 0; seal.size = MIN_SIZE;
+  if (hooked) { hooked.state = 'flee'; hooked.fleeT = 2; hooked = null; }
+  tension = 0;
+  const g = sealGeo();
+  ghost = { x: g.left + g.w / 2, y: g.top + 2 };
+  SFX.die(); saveBest();
+}
+
+// ================= smashing the ice and the shark fight =================
+function startSmash() {
+  if (!bossReady()) return;
+  smashing = true; seal.jump = seal.jumpDur = 1.3;
+  if (hooked) { hooked.state = 'flee'; hooked.fleeT = 2; hooked = null; tension = 0; }
+  const g = sealGeo();
+  pops.push(pop(g.left + g.w / 2, Math.max(14, g.top - 10), 'HERE GOES!', '#ffd84a'));
+  tone(200, 900, .5, 'square', .05);
+}
+function breakIce() {
+  smashing = false;
+  iceBroken = true; bg = bgArena;
+  swim = { x: (SH0 + SH1) / 2, y: ICE_TOP + 2, vx: 0, vy: 30, dir: 1, biteCd: 0, hurt: 0, nip: 0 };
+  for (let i = 0; i < 40; i++) parts.push({ x: rand(SH0, SH1), y: ICE_TOP + rand(0, 6), vx: rand(-70, 70), vy: rand(-140, -30), g: 260, life: rand(.6, 1.3), col: ['#ffffff', '#d8eef7', '#bfe2f0'][i % 3] });
+  splash((SH0 + SH1) / 2, SURF, 30);
+  iceChunks = Array.from({ length: 7 }, (_, i) => ({ x: SH0 + 6 + i * 16 + rand(-3, 3), w: Math.round(rand(3, 8)), ph: rand(0, 6) }));
+  fishes = []; jellies = []; for (let i = 0; i < 10; i++) spawnFish(true); // the cavern has its own fish
+  shake = .6; SFX.crack();
+  shark = { x: W + 60, y: SURF + 120, vx: -40, vy: 0, dir: -1, len: 84, h: 30, hp: 160, max: 160, state: 'circle', timer: 3, ang: 0, hurt: 0, intro: false, spawnT: 5, pups: 0 };
+  state = 'boss'; bossT = 0;
+}
+function hurtSeal(amount) {
+  const before = kg(seal.size);
+  swim.hurt = 1.2; seal.size -= amount;
+  const g = sealGeo();
+  pops.push(pop(g.left + g.w / 2, g.top - 8, '-' + Math.max(1, before - kg(seal.size)) + ' KG', '#ff6a5a'));
+  burst(g.mx, g.my, 10, ['#ff6a5a', '#ffffff']); shake = .35; SFX.hit();
+}
+function biteShark() {
+  const S = shark, dmg = 12 + seal.size * .12;
+  S.hp -= dmg; S.hurt = .3; swim.biteCd = .7; seal.chew = .3;
+  const g = sealGeo();
+  pops.push(pop(g.mx, g.my - 12, 'CHOMP!', '#ffffff'));
+  burst(g.mx, g.my, 10, ['#c0303a', '#ff8080']); SFX.chomp();
+  S.vx += (S.x - swim.x) * 1.5; S.vy += (S.y - swim.y) * 1.5;
+  if (S.state === 'stun') { S.state = 'circle'; S.timer = rand(1, 2); }
+  if (S.hp <= 0) winBoss();
+}
+function winBoss() {
+  state = 'won'; wonT = 0; shark.state = 'dead'; shark.vx = shark.vy = 0;
+  minions.forEach(m => burst(m.x, m.y, 6, ['#ffffff', '#cdefff'])); minions = [];
+  best.sharks = (best.sharks || 0) + 1; saveBest();
+  const g = sealGeo();
+  pops.push(pop(g.left + g.w / 2, g.top - 10, 'SHE WON!', '#ffd84a'));
+  burst(shark.x, shark.y, 20, ['#ffd84a', '#ffffff', '#ff8080'], 60);
+  SFX.win();
+}
+
+// ================= free roam =================
+function startRoam(fromTitle) {
+  const keep = seal.size;
+  reset();
+  seal.size = seal.disp = fromTitle ? START_SIZE + 12 : Math.max(keep, START_SIZE);
+  state = 'roam'; roamT = 0;
+  swim = { x: 200, y: SURF + 30, vx: 0, vy: 0, dir: 1, biteCd: 0, hurt: 0, nip: 0 };
+  camX = 0; camY = 0;
+  const zb = ZONES[2];
+  nerpas = Array.from({ length: 3 }, (_, i) => ({ x: zb.x0 + 120 + i * 180, y: SURF + 30 + i * 25, vx: 12, dir: 1, ph: rand(0, 6), blink: 0 }));
+  setZone(zoneAt(swim.x), true);
+  spawnHostiles();
+  pops.push(pop(swim.x, SURF - 14, 'THE WIDE WATERS! SWIM EAST', '#ffd84a'));
+}
+function setZone(z, silent) {
+  curZone = z; buildZone(z);
+  const i = ZONES.indexOf(z);
+  if (ZONES[i + 1]) buildZone(ZONES[i + 1]);
+  if (ZONES[i - 1]) buildZone(ZONES[i - 1]);
+  best.visited = best.visited || [];
+  if (!best.visited.includes(z.id)) { best.visited.push(z.id); saveBest(); if (!silent) pops.push(pop(swim.x, swim.y - 20, 'NEW: FAST TRAVEL HERE (T)', '#7ad8ff', .9)); }
+  fishes = []; for (let k = 0; k < 12; k++) spawnFish(true);
+  if (!silent) { pops.push(pop(swim.x, swim.y - 28, z.name, '#ffffff')); tone(600, 900, .15, 'square', .04); }
+}
+function travelTo(i) {
+  const z = ZONES[i];
+  if (!(best.visited || []).includes(z.id)) return;
+  travelOpen = false;
+  if (z === curZone) return;
+  swim.x = z.x0 + z.w / 2; swim.y = SURF + 30; swim.vx = swim.vy = 0;
+  camX = clamp(swim.x - W / 2, 0, ROAM_W - W); camY = 0;
+  burst(swim.x, swim.y, 16, ['#ffffff', '#7ad8ff'], 60); SFX.splash();
+  setZone(z, false);
+}
+function roamConfine(g) {
+  const bed = roamBed(swim.x);
+  swim.x = clamp(swim.x, g.w / 2 + 2, ROAM_W - g.w / 2 - 2);
+  if (curZone.id === 'arctic') { const wall = iceUnderX(swim.y); if (wall > 0 && swim.x - g.w / 2 < wall) { swim.x = wall + g.w / 2; swim.vx = Math.max(0, swim.vx); } }
+  if (swim.y + g.h / 2 > bed - 2) { swim.y = bed - 2 - g.h / 2; swim.vy = Math.min(0, swim.vy); }
+}
+const nearNerpa = () => nerpas.some(n => Math.hypot(n.x - swim.x, n.y - swim.y) < 70);
+function giftFish(T) {
+  const n = nerpas.reduce((a, b) => Math.hypot(a.x - swim.x, a.y - swim.y) < Math.hypot(b.x - swim.x, b.y - swim.y) ? a : b);
+  best.fed = (best.fed || 0) + 1; seal.chew = .3; seal.size = Math.min(MAX_SIZE, seal.size + 1);
+  journal[T.name] = (journal[T.name] || 0) + 1; saveJournal();
+  for (let i = 0; i < 3; i++) parts.push({ x: n.x + rand(-6, 6), y: n.y - 8, vx: rand(-8, 8), vy: rand(-30, -18), g: 0, life: 1.2, col: '#ff7aa0', heart: true });
+  pops.push(pop(n.x, n.y - 16, 'SHARED ' + Math.min(10, best.fed) + '/10', '#ffb0d0'));
+  tone(700, 1000, .12, 'triangle', .05);
+  if (best.fed >= 10 && !best.skinUnlocked) {
+    best.skinUnlocked = true; best.skin = 'baikal';
+    pops.push(pop(swim.x, swim.y - 30, 'BAIKAL SEAL SKIN UNLOCKED! (K TO SWITCH)', '#ffd84a', .5));
+    burst(swim.x, swim.y, 20, ['#ffd84a', '#ffffff', '#ffb0d0'], 60); SFX.win();
+  }
+  saveBest();
+}
+function updateRoam(dt) {
+  roamT += dt;
+  if (state === 'roam') { const z = zoneAt(swim.x); if (z !== curZone) setZone(z, false); }
+  const zb = ZONES[2];
+  for (const n of nerpas) { // nerpas drift about lazily
+    n.ph += dt; n.blink = Math.max(0, n.blink - dt); if (Math.random() < dt * .3) n.blink = .15;
+    n.x += n.vx * dt; n.y += Math.sin(n.ph * .8) * 6 * dt;
+    if (n.x < zb.x0 + 30) { n.x = zb.x0 + 30; n.vx = 12; }
+    if (n.x > zb.x0 + zb.w - 30) { n.x = zb.x0 + zb.w - 30; n.vx = -12; }
+    if (Math.random() < dt * .1) n.vx = -n.vx;
+    n.dir = n.vx < 0 ? -1 : 1;
+    n.y = clamp(n.y, SURF + 12, SURF + 140);
+  }
+  camX = lerp(camX, clamp(swim.x - W / 2, 0, ROAM_W - W), 1 - Math.exp(-dt * 4));
+  updateHostiles(dt);
+}
+function spawnHostiles() {
+  hostiles = [];
+  for (const z of ZONES) for (const T of z.hostile) for (let i = 0; i < T.count; i++) {
+    const h = { T, zone: z, x: 0, y: 0, hx: 0, hy: 0, vx: 0, vy: 0, dir: 1, cd: 1, ph: rand(0, 6), alert: 0, dead: 0, wasChasing: false };
+    placeHostile(h); hostiles.push(h);
+  }
+}
+function placeHostile(h) {
+  const z = h.zone;
+  let x = z.x0 + rand(40, z.w - 40);
+  if (swim && Math.abs(x - swim.x) < 220) x = x < swim.x ? Math.max(z.x0 + 40, swim.x - rand(220, 320)) : Math.min(z.x0 + z.w - 40, swim.x + rand(220, 320));
+  h.x = h.hx = x; h.y = h.hy = clamp(SURF + rand(h.T.dmin, h.T.dmax), SURF + 10, roamBed(x) - 12); h.vx = h.vy = 0; h.cd = 1;
+}
+function updateHostiles(dt) {
+  const g = sealGeo(), sx = g.left + g.w / 2, sy = g.top + g.h / 2, k = 1 - Math.exp(-dt * 2.5);
+  for (const h of hostiles) {
+    if (h.dead > 0) { if ((h.dead -= dt) <= 0) placeHostile(h); continue; }
+    const T = h.T;
+    h.cd -= dt; h.alert = Math.max(0, h.alert - dt);
+    const d = Math.hypot(sx - h.x, sy - h.y) || 1, chasing = state === 'roam' && d < T.aggro;
+    if (chasing && !h.wasChasing) {
+      h.alert = .8; tone(260, 160, .15, 'square', .04);
+      if (!T.intro) { T.intro = true; pops.push(pop(h.x, h.y - 18, T.name + '! ' + (T.minEat ? 'BITE IT HEAD-ON ONCE YOU WEIGH ' + kg(T.minEat) + ' KG' : 'BITE IT HEAD-ON'), '#ff6a5a')); }
+    }
+    h.wasChasing = chasing;
+    if (chasing) { h.vx = lerp(h.vx, (sx - h.x) / d * T.speed, k); h.vy = lerp(h.vy, (sy - h.y) / d * T.speed, k); }
+    else { // patrols around its haunt
+      h.ph += dt;
+      const tx = h.hx + Math.sin(h.ph * .4) * 90, ty = h.hy + Math.cos(h.ph * .3) * 20, dd = Math.hypot(tx - h.x, ty - h.y) || 1;
+      h.vx = lerp(h.vx, (tx - h.x) / dd * T.speed * .35, k); h.vy = lerp(h.vy, (ty - h.y) / dd * T.speed * .35, k);
+    }
+    h.x += h.vx * dt; h.y += h.vy * dt;
+    h.x = clamp(h.x, h.zone.x0 + T.len / 2, h.zone.x0 + h.zone.w - T.len / 2); h.y = clamp(h.y, SURF + 6, roamBed(h.x) - 8);
+    if (Math.abs(h.vx) > 3) h.dir = Math.sign(h.vx);
+    if (state !== 'roam') continue;
+    const headX = h.x + h.dir * T.len * .4, hh = T.len * T.ratio * .5;
+    if (swim.biteCd <= 0 && seal.size >= T.minEat && Math.hypot(g.mx - headX, g.my - h.y) < 10) { // she strikes first
+      h.dead = 25; swim.biteCd = .5; eat(T); burst(h.x, h.y, 12, [T.body, T.back, '#ffffff']);
+      continue;
+    }
+    if (h.cd <= 0 && Math.abs(h.x - sx) < T.len * .45 + g.w * .35 && Math.abs(h.y - sy) < hh + g.h * .35) { // it bites her
+      h.cd = T.cd; swim.nip = .3;
+      const before = kg(seal.size); seal.size -= T.bite;
+      swim.vx += (sx - h.x) * 3; swim.vy += (sy - h.y) * 3; h.vx = (h.x - sx) * 2; h.vy = (h.y - sy) * 2;
+      pops.push(pop(sx, g.top - 8, '-' + Math.max(1, before - kg(seal.size)) + ' KG', '#ff6a5a'));
+      burst(g.mx, g.my, 6, ['#ff6a5a', '#ffffff']); SFX.hit(); shake = .2;
+    }
+  }
+}
+function drawHostiles() {
+  for (const h of hostiles) {
+    if (h.dead > 0) continue;
+    const y = h.y - CY;
+    if (y < -30 || y > H + 30) continue;
+    drawSpr(fishSprite(h.T).c, h.x, y, h.dir < 0, false);
+    if (h.alert > 0 && Math.floor(t * 8) % 2) txt('!', h.x - 1, y - 14, '#ff5040');
+  }
+}
+// keep something inside the cavern (and the shaft above it, if allowed); returns true when it hit a wall
+function confine(o, hw, hh, shaftOk) {
+  let hit = false;
+  if (o.y - hh < AR.y0) {
+    if (shaftOk && o.x >= SH0 && o.x <= SH1) {
+      if (o.x - hw < SH0) { o.x = SH0 + hw; hit = true; }
+      if (o.x + hw > SH1) { o.x = SH1 - hw; hit = true; }
+    } else { o.y = AR.y0 + hh; o.vy = Math.max(0, o.vy); hit = true; }
+  }
+  if (o.y - hh >= AR.y0) {
+    if (o.x - hw < AR.x0) { o.x = AR.x0 + hw; o.vx = Math.abs(o.vx) * .3; hit = true; }
+    if (o.x + hw > AR.x1) { o.x = AR.x1 - hw; o.vx = -Math.abs(o.vx) * .3; hit = true; }
+  }
+  if (o.y + hh > AR.y1) { o.y = AR.y1 - hh; o.vy = -Math.abs(o.vy) * .3; hit = true; }
+  return hit;
+}
+function updateSwim(dt, ix, iy) {
+  const k = 1 - Math.exp(-dt * 5), sp = 78;
+  swim.vx = lerp(swim.vx, ix * sp, k); swim.vy = lerp(swim.vy, iy * sp + 4, k);
+  swim.x += swim.vx * dt; swim.y += swim.vy * dt;
+  if (Math.abs(swim.vx) > 6) swim.dir = Math.sign(swim.vx);
+  const g = sealGeo();
+  swim.y = Math.max(swim.y, SURF - g.h * .15);
+  if (state === 'roam' || (curZone && state === 'dead')) roamConfine(g); else confine(swim, g.w / 2 + 2, g.h / 2 + 2, true);
+  swim.biteCd -= dt; swim.hurt -= dt; swim.nip -= dt; bossT += dt;
+  if (Math.random() < dt * 1.5) bubbles.push({ x: g.mx, y: g.my - 2, r: 1, ph: rand(0, 6) });
+  // she eats any fish she swims into
+  if (state === 'boss' || state === 'roam') for (let i = fishes.length - 1; i >= 0; i--) {
+    const f = fishes[i];
+    if (f.state !== 'hooked' && Math.hypot(f.x - g.mx, f.y - g.my) < 7 + f.T.len * .3) {
+      fishes.splice(i, 1);
+      if (state === 'roam' && nearNerpa()) giftFish(f.T); else eat(f.T); // next to a nerpa the fish is shared, not eaten
+      break;
+    }
+  }
+}
+function updateShark(dt) {
+  const S = shark;
+  S.timer -= dt; S.hurt = Math.max(0, S.hurt - dt);
+  const g = sealGeo(), sx = g.left + g.w / 2, sy = g.top + g.h / 2;
+  if (S.state === 'dead') {
+    S.y = Math.min(S.y + 16 * dt, AR.y1 - 12); S.x += S.dir * 3 * dt;
+    if (Math.random() < dt * 3) bubbles.push({ x: S.x + rand(-20, 20), y: S.y, r: Math.random() < .3 ? 2 : 1, ph: rand(0, 6) });
+    return;
+  }
+  if (!S.intro && S.x < AR.x1 - S.len * .45 - 4) { S.intro = true; pops.push(pop(S.x, S.y - 24, 'A SHARK!', '#ff6a5a')); SFX.roar(); shake = .3; }
+  // it calls in pups: two at first, then one more whenever fewer than three are about
+  if (S.intro && (S.spawnT -= dt) < 0 && minions.length < 3) {
+    const n = S.pups === 0 ? 2 : 1; S.pups++; S.spawnT = rand(7, 10);
+    for (let i = 0; i < n; i++) minions.push({ x: S.x + rand(-10, 10), y: S.y + rand(-8, 8), vx: 0, vy: 0, dir: S.dir, cd: 1.5, ph: rand(0, 6.28) });
+    pops.push(pop(S.x, S.y - 30, S.pups === 1 ? 'IT CALLED ITS PUPS!' : 'ANOTHER PUP!', '#ff6a5a')); SFX.roar();
+  }
+  const k = 1 - Math.exp(-dt * 2.5);
+  if (S.state === 'circle') {
+    if (!S.intro) { S.vx = -45; S.vy = (TUN.y0 + TUN.y1) / 2 - S.y; } // still coming down the tunnel
+    else {
+      S.ang += dt * .9;
+      const tx = sx + Math.cos(S.ang) * 90, ty = sy + Math.sin(S.ang) * 45, d = Math.hypot(tx - S.x, ty - S.y) || 1;
+      S.vx = lerp(S.vx, (tx - S.x) / d * 55, k); S.vy = lerp(S.vy, (ty - S.y) / d * 55, k);
+      if (S.timer < 0) { S.state = 'tele'; S.timer = .7; SFX.roar(); }
+    }
+  } else if (S.state === 'tele') {
+    S.vx *= 1 - dt * 5; S.vy *= 1 - dt * 5;
+    S.dir = Math.sign(sx - S.x) || S.dir;
+    if (S.timer < 0) {
+      const d = Math.hypot(sx - S.x, sy - S.y) || 1;
+      S.vx = (sx - S.x) / d * 215; S.vy = (sy - S.y) / d * 215;
+      S.state = 'charge'; S.timer = .7; noise(.3, .1, 300);
+    }
+  } else if (S.state === 'charge') {
+    if (S.timer < 0) { S.state = 'stun'; S.timer = 1.4; pops.push(pop(S.x, S.y - 22, 'DAZED!', '#ffe36a')); }
+  } else if (S.state === 'stun') {
+    S.vx *= 1 - dt * 3; S.vy *= 1 - dt * 3;
+    if (S.timer < 0) { S.state = 'circle'; S.timer = rand(1.4, 2.6); }
+  }
+  S.x += S.vx * dt; S.y += S.vy * dt;
+  const bumped = S.intro && confine(S, S.len * .45, S.h * .45, false);
+  if (bumped && S.state === 'charge') {
+    S.state = 'stun'; S.timer = 2;
+    pops.push(pop(S.x, S.y - 22, 'DAZED!', '#ffe36a'));
+    burst(S.x + S.dir * S.len * .4, S.y, 8, ['#ffffff', '#cdefff']); shake = .25; SFX.hit();
+  }
+  if (S.state !== 'charge' && S.state !== 'tele' && Math.abs(S.vx) > 4) S.dir = Math.sign(S.vx);
+  // contact with the seal: a charge hurts her, otherwise she can bite its tail or bite it while dazed
+  if (state !== 'boss') return;
+  const touching = Math.abs(S.x - sx) < S.len * .42 + g.w * .35 && Math.abs(S.y - sy) < S.h * .45 + g.h * .35;
+  if (!touching) return;
+  if (S.state === 'charge') {
+    if (swim.hurt <= 0) {
+      hurtSeal(7 + seal.size * .1);
+      swim.vx = S.vx * .5; swim.vy = S.vy * .5;
+      S.state = 'circle'; S.timer = rand(1.5, 2.5);
+    }
+  } else if (swim.biteCd <= 0 && (S.state === 'stun' || (sx - S.x) * S.dir < -S.len * .15)) biteShark();
+}
+function updateMinions(dt) {
+  const g = sealGeo(), sx = g.left + g.w / 2, sy = g.top + g.h / 2, k = 1 - Math.exp(-dt * 3);
+  for (let i = minions.length - 1; i >= 0; i--) {
+    const m = minions[i];
+    m.cd -= dt; m.ph += dt;
+    const tx = sx + Math.sin(m.ph * 1.3) * 14, ty = sy + Math.cos(m.ph * .9) * 10, d = Math.hypot(tx - m.x, ty - m.y) || 1;
+    const sp = state === 'boss' ? 58 : 0;
+    m.vx = lerp(m.vx, (tx - m.x) / d * sp, k); m.vy = lerp(m.vy, (ty - m.y) / d * sp, k);
+    m.x += m.vx * dt; m.y += m.vy * dt;
+    confine(m, 11, 4, true);
+    if (Math.abs(m.vx) > 3) m.dir = Math.sign(m.vx);
+    if (state !== 'boss') continue;
+    if (swim.biteCd <= 0 && Math.hypot(g.mx - m.x, g.my - m.y) < 9) { // she meets it head-on and eats it
+      minions.splice(i, 1);
+      seal.size = Math.min(MAX_SIZE, seal.size + 3); seal.chew = .3; swim.biteCd = .4;
+      pops.push(pop(g.mx, g.my - 12, 'GOT IT!', '#9cff8a'));
+      burst(m.x, m.y, 10, [SHK.body, SHK.belly, '#ffffff']); SFX.chomp();
+    } else if (m.cd <= 0 && Math.abs(m.x - sx) < g.w * .4 + 6 && Math.abs(m.y - sy) < g.h * .4 + 4) { // it nips her
+      m.cd = 2.2; m.vx = (m.x - sx) * 4; m.vy = (m.y - sy) * 4;
+      const before = kg(seal.size); seal.size -= 1 + seal.size * .015; swim.nip = .25;
+      pops.push(pop(sx, g.top - 8, '-' + Math.max(1, before - kg(seal.size)) + ' KG', '#ff6a5a'));
+      burst(m.x, m.y, 5, ['#ff6a5a', '#ffffff']); SFX.hit();
+    }
+  }
+}
+
+// ================= input =================
+const keys = {};
+const KEYMAP = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down' };
+const pointer = { down: false, x: 0, y: 0 };
+function action() {
+  audio();
+  if (paused) { paused = false; return; }
+  if (state === 'won' && wonT > 2) { startRoam(false); return; }
+  if (state === 'title' || (state === 'dead' && deadT > 1.5)) { reset(); state = 'play'; }
+}
+addEventListener('keydown', e => {
+  const k = KEYMAP[e.code];
+  if (k) { keys[k] = true; e.preventDefault(); audio(); }
+  if (journalOpen && (k === 'left' || k === 'right')) journalPage = (journalPage + (k === 'left' ? ZONES.length - 1 : 1)) % ZONES.length;
+  if (travelOpen && (k === 'up' || k === 'down')) travelSel = (travelSel + (k === 'up' ? ZONES.length - 1 : 1)) % ZONES.length;
+  if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); if (journalOpen) journalOpen = false; else if (travelOpen) travelTo(travelSel); else action(); }
+  if (e.code === 'Escape' && travelOpen) travelOpen = false;
+  else if ((e.code === 'KeyP' || e.code === 'Escape') && (state === 'play' || state === 'boss' || state === 'roam')) paused = !paused;
+  if (e.code === 'KeyM') muted = !muted;
+  if (e.code === 'KeyJ') { journalOpen = !journalOpen; audio(); }
+  if (e.code === 'KeyB') { audio(); startSmash(); }
+  if (e.code === 'KeyT' && state === 'roam') { travelOpen = !travelOpen; travelSel = ZONES.indexOf(curZone); }
+  if (e.code === 'KeyR' && state === 'title' && best.sharks) { audio(); startRoam(true); }
+  if (e.code === 'KeyK' && best.skinUnlocked) { best.skin = best.skin === 'baikal' ? '' : 'baikal'; saveBest(); }
+});
+addEventListener('keyup', e => { const k = KEYMAP[e.code]; if (k) keys[k] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; pointer.down = false; });
+document.addEventListener('visibilitychange', () => { if (document.hidden && (state === 'play' || state === 'boss' || state === 'roam')) paused = true; });
+function setPtr(e) {
+  const rc = cv.getBoundingClientRect();
+  pointer.x = (e.clientX - rc.left) / rc.width * W;
+  pointer.y = (e.clientY - rc.top) / rc.height * H;
+}
+cv.addEventListener('pointerdown', e => {
+  setPtr(e);
+  if (pointer.x < 48 && pointer.y < 17) { journalOpen = !journalOpen; audio(); return; } // journal button
+  if (journalOpen) { if (pointer.y > 158) journalOpen = false; else journalPage = (journalPage + (pointer.x < W / 2 ? ZONES.length - 1 : 1)) % ZONES.length; return; }
+  if (state === 'roam' && !travelOpen && pointer.x >= 50 && pointer.x < 68 && pointer.y < 17) { travelOpen = true; travelSel = ZONES.indexOf(curZone); return; } // travel button
+  if (travelOpen) { const i = Math.floor((pointer.y - 59) / 14); if (pointer.x > 90 && pointer.x < 230 && i >= 0 && i < ZONES.length) travelTo(i); else travelOpen = false; return; }
+  if (bossReady()) {
+    const g = sealGeo();
+    if (pointer.x >= g.left - 4 && pointer.x <= g.left + g.w + 4 && pointer.y + camY >= g.top - 8 && pointer.y + camY <= g.top + g.h + 4) { audio(); startSmash(); return; }
+  }
+  if ((state !== 'play' && state !== 'boss' && state !== 'roam') || paused) { action(); return; }
+  audio(); pointer.down = true; cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove', setPtr);
+cv.addEventListener('pointerup', () => { pointer.down = false; });
+cv.addEventListener('pointercancel', () => { pointer.down = false; });
+
+// ================= update =================
+function update(dt) {
+  t += dt;
+  const playing = state === 'play' || state === 'boss' || state === 'roam';
+  let ix = (keys.right ? 1 : 0) - (keys.left ? 1 : 0), iy = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
+  if (pointer.down) {
+    const o = swimming() && swim ? swim : hook;
+    const dx = pointer.x + (state === 'roam' ? camX : 0) - o.x, dy = pointer.y + camY - o.y;
+    ix = Math.abs(dx) > 2 ? clamp(dx / 14, -1, 1) : 0;
+    iy = Math.abs(dy) > 2 ? clamp(dy / 14, -1, 1) : 0;
+  }
+  if (!playing) { ix = 0; iy = 0; }
+
+  // hunger: she slowly shrinks, faster when big and as time goes on
+  if (playing) {
+    elapsed += dt;
+    seal.size -= (0.12 + seal.size * 0.0035) * (1 + elapsed / 300) * dt;
+    if (seal.size <= MIN_SIZE) die();
+  }
+  if (state === 'dead') { deadT += dt; ghost.y -= 9 * dt; }
+  if (state === 'won') wonT += dt;
+  seal.disp = lerp(seal.disp, seal.size, 1 - Math.exp(-dt * 5));
+  seal.chew = Math.max(0, seal.chew - dt);
+  if (seal.jump > 0 && (seal.jump -= dt) <= 0) {
+    seal.jump = 0;
+    if (smashing) breakIce();
+    else {
+      const lg = sealGeo();
+      for (let i = 0; i < 12; i++) parts.push({ x: lg.left + rand(0, lg.w), y: ICE_TOP + 1, vx: rand(-30, 30), vy: rand(-50, -15), g: 160, life: rand(.3, .6), col: Math.random() < .5 ? '#ffffff' : '#d8eef7' });
+      tone(140, 60, .12, 'triangle', .08);
+    }
+  }
+  seal.blink = Math.max(0, seal.blink - dt);
+  if ((seal.blinkT -= dt) < 0) { seal.blink = .13; seal.blinkT = rand(2, 5); }
+  bobDip = Math.max(0, bobDip - dt);
+
+  // ---- hook / rod (or, once the ice is smashed, the seal swimming) ----
+  let nowUnder = false;
+  if (swimming() || (curZone && state === 'dead')) updateSwim(dt, ix, iy);
+  else {
+  const r = rodGeo(sealGeo());
+  if (hook.stun > 0) { hook.stun -= dt; ix = 0; iy = 0; }
+  const under = hook.y > SURF + 2;
+  if (!hooked) {
+    tension = Math.max(0, tension - dt);
+    const hs = under ? 40 : 70, vs = under ? 44 : 80, k = 1 - Math.exp(-dt * (under ? 6 : 10));
+    hook.vx = lerp(hook.vx, ix * hs, k); hook.vy = lerp(hook.vy, iy * vs, k);
+  } else {
+    const f = hooked, T = f.T;
+    if (f.thrash > 0) {
+      f.thrash -= dt; f.stamina = Math.max(.25, f.stamina - dt * (.25 + T.len * .005));
+      if (f.thrash <= 0) f.rest = rand(1.2, 2.6);
+      if (Math.random() < dt * 8) bubbles.push({ x: f.x + rand(-4, 4), y: f.y, r: 1, ph: rand(0, 6) });
+    } else if ((f.rest -= dt) <= 0) {
+      if (T.str > .25 && Math.random() < .5 + T.str * .4) {
+        f.thrash = rand(.5, 1.1) * (.6 + T.str * .6);
+        const a = rand(.15, 1.25), s = Math.random() < .75 ? 1 : -1;
+        f.pdx = Math.cos(a) * s; f.pdy = Math.sin(a);
+        bobDip = f.thrash;
+      } else f.rest = rand(1, 2);
+    }
+    const thr = f.thrash > 0, reel = iy < 0;
+    const pull = thr ? T.str * f.stamina * 26 : T.str * 7 + 3;
+    const reelSpd = 46 / (1 + T.len / 40);
+    const tvx = ix * 24 + f.pdx * pull, tvy = (reel ? iy * reelSpd : iy * 28) + f.pdy * pull * (thr ? 1 : .4);
+    const k = 1 - Math.exp(-dt * 8);
+    hook.vx = lerp(hook.vx, tvx, k); hook.vy = lerp(hook.vy, tvy, k);
+    if (reel) {
+      tension += dt * (thr ? T.str * 1.5 * f.stamina + .1 : .04 + T.str * .04);
+      if ((reelTick -= dt) < 0) { SFX.reel(); reelTick = .07; }
+    } else tension -= dt * (iy > 0 ? 1.3 : .55);
+    tension = clamp(tension, 0, 1.2);
+    f.dir = f.pdx > 0 ? -1 : 1;
+  }
+  hook.x += hook.vx * dt; hook.y += hook.vy * dt;
+  if (hook.x < HOOK_MIN_X) { hook.x = HOOK_MIN_X; hook.vx = Math.max(0, hook.vx); }
+  if (hook.x > HOOK_MAX_X) { hook.x = HOOK_MAX_X; hook.vx = Math.min(0, hook.vx); }
+  if (hook.y < r.ty + 6) { hook.y = r.ty + 6; hook.vy = Math.max(0, hook.vy); }
+  if (hook.y > BED - 6) { hook.y = BED - 6; hook.vy = Math.min(0, hook.vy); }
+  nowUnder = hook.y > SURF + 2;
+  if (nowUnder !== wasUnder && !hooked) { splash(hook.x, SURF, 4); SFX.plop(); }
+  wasUnder = nowUnder;
+  if (hooked) {
+    hooked.x = hook.x - hooked.dir * hooked.T.len / 2; hooked.y = hook.y;
+    if (tension >= 1) snap('SNAP!');
+    else if (hook.y <= SURF) catchFish();
+  }
+  }
+
+  // ---- fish ----
+  const hookSpeed = Math.hypot(hook.vx, hook.vy);
+  const canBite = state === 'play' && !hooked && nowUnder && hook.stun <= 0;
+  for (const f of fishes) {
+    const T = f.T;
+    if (f.state === 'hooked') continue;
+    const mx = f.x + f.dir * T.len / 2, d = Math.hypot(hook.x - mx, hook.y - f.y);
+    if (f.state === 'swim') {
+      f.ph += dt * 2;
+      f.x += f.dir * f.spd * dt;
+      f.y = lerp(f.y, f.baseY + Math.sin(f.ph) * 3, dt * 2);
+      if ((f.turnT -= dt) < 0) {
+        f.turnT = rand(4, 10);
+        if (Math.random() < .35) f.dir *= -1;
+        f.baseY = clamp(f.baseY + rand(-25, 25), SURF + T.dmin, SURF + T.dmax);
+      }
+      const lureR = 46 + T.len * .6; // big fish spot the bait from further away
+      if (canBite && d < lureR) {
+        if (hookSpeed < 18) f.interest += dt * (.9 / (1 + T.len / 40)) * (1 - d / (lureR + 14)) * 1.6;
+        else if (hookSpeed > 50 && d < 34) scare(f);
+        if (f.interest > 1) f.state = 'lured';
+      } else f.interest = Math.max(0, f.interest - dt * .3);
+    } else if (f.state === 'lured') {
+      if (!canBite) { f.state = 'swim'; f.interest = 0; f.baseY = f.y; }
+      else if (hookSpeed > 32) scare(f);
+      else {
+        if (Math.abs(hook.x - f.x) > 2) f.dir = Math.sign(hook.x - f.x);
+        const tx = hook.x - f.dir * T.len / 2, ty = hook.y, dd = Math.hypot(tx - f.x, ty - f.y) || 1, sp = f.spd * .6 + 6;
+        f.x += (tx - f.x) / dd * Math.min(dd, sp * dt);
+        f.y += (ty - f.y) / dd * Math.min(dd, sp * dt);
+        if (d < 2.5) bite(f);
+      }
+    } else if (f.state === 'flee') {
+      f.x += f.dir * f.spd * 2.4 * dt;
+      if ((f.fleeT -= dt) < 0) { f.state = 'swim'; f.baseY = clamp(f.y, SURF + T.dmin, SURF + T.dmax); }
+    }
+    if (state === 'roam' || curZone) { // stay in the biome's water
+      const z = zoneAt(f.x), bed = roamBed(f.x);
+      if (f.x - T.len / 2 < z.x0 + 2) f.dir = 1; else if (f.x + T.len / 2 > z.x0 + z.w - 2) f.dir = -1;
+      f.y = clamp(f.y, SURF + 6, bed - 8); f.baseY = clamp(f.baseY, SURF + 6, bed - 8);
+    } else if (iceBroken) { // cavern walls
+      if (f.x - T.len / 2 < AR.x0 + 3) f.dir = 1; else if (f.x + T.len / 2 > AR.x1 - 3) f.dir = -1;
+      f.y = clamp(f.y, AR.y0 + 6, AR.y1 - 6); f.baseY = clamp(f.baseY, AR.y0 + 6, AR.y1 - 6);
+    } else {
+      if (f.dir < 0 && f.x - T.len / 2 < iceUnderX(f.y) + 3) f.dir = 1;
+      f.y = clamp(f.y, SURF + 6, BED - 8);
+    }
+  }
+  fishes = fishes.filter(f => curZone || f.state === 'hooked' || (f.x > -50 && f.x < W + 50));
+  while (fishes.length < (iceBroken ? 10 : curZone ? 12 : 16)) spawnFish(false);
+
+  // ---- jellyfish ----
+  for (const j of jellies) {
+    j.ph += dt * 3; j.cool = Math.max(0, j.cool - dt);
+    j.y += (Math.sin(j.ph) > .3 ? -7 : 3) * dt; j.x += j.vx * dt;
+    if (j.x < 150 || j.x > 305) j.vx = -j.vx;
+    j.y = clamp(j.y, SURF + 50, BED - 40);
+    if (playing && nowUnder && j.cool <= 0 && Math.abs(hook.x - j.x) < 6 && hook.y > j.y - 2 && hook.y < j.y + 10) {
+      j.cool = 2.5; SFX.zap();
+      burst(hook.x, hook.y, 10, ['#ff8ae0', '#ffffff', '#fff27a'], 50);
+      // mid-fight a zap strains the line instead of cutting it: the fish may still snap it if it thrashes now
+      if (hooked) tension = Math.min(1.2, tension + .4);
+      else hook.stun = 1;
+      seal.size -= 1; pops.push(pop(hook.x, hook.y - 8, 'ZAP!', '#ff8ae0'));
+    }
+  }
+
+  // ---- flights (fish flying into the seal's mouth) ----
+  const g = sealGeo();
+  for (const fl of flights) {
+    fl.p += dt / fl.dur;
+    const p = Math.min(1, fl.p);
+    fl.x = lerp(fl.sx, g.mx, p);
+    fl.y = lerp(fl.sy, g.my, p) - Math.sin(p * Math.PI) * (26 + Math.abs(fl.sx - g.mx) * .2);
+    if (fl.p >= 1) { eat(fl.T); fl.done = true; }
+  }
+  flights = flights.filter(f => !f.done);
+
+  // ---- particles, popups, bubbles, ambience ----
+  for (const p of parts) {
+    p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt;
+    if (p.water && p.vy > 0 && p.y > SURF) p.life = 0;
+  }
+  parts = parts.filter(p => p.life > 0);
+  for (const p of pops) { if (p.delay > 0) p.delay -= dt; else { p.life -= dt; p.y -= 9 * dt; } }
+  pops = pops.filter(p => p.life > 0);
+  for (const k of kelps) if (Math.random() < dt * .25) bubbles.push({ x: k.x, y: bedAt(k.x) - 2, r: Math.random() < .3 ? 2 : 1, ph: rand(0, 6) });
+  for (const b of bubbles) { b.y -= 14 * dt; b.x += Math.sin(t * 3 + b.ph) * .15; }
+  bubbles = bubbles.filter(b => b.y > SURF + 3);
+  for (const c of clouds) { c.x += c.v * dt; if (c.x > W + 10) { c.x = -c.c.width - 10; c.y = Math.round(rand(6, 42)); } }
+  for (const f of flakes) { f.y += f.v * dt; f.x += Math.sin(t + f.ph) * .15; if (f.y > SURF) { f.y = -4; f.x = rand(0, W); } }
+
+  // ---- camera follows the hook under water ----
+  const focus = state === 'dead' ? ghost.y - 70 : swimming() ? swim.y - 90 : hook.y - 95;
+  camY = lerp(camY, clamp(focus, 0, (curZone ? roamBed(swim.x) + 40 : WORLD_H) - H), 1 - Math.exp(-dt * 4));
+  shake = Math.max(0, shake - dt);
+  if (shark) updateShark(dt);
+  if (minions.length) updateMinions(dt);
+  if (curZone) updateRoam(dt);
+}
+
+// ================= render =================
+function px(x, y, col) { ctx.fillStyle = col; ctx.fillRect(Math.round(x), Math.round(y - CY), 1, 1); }
+function drawSpr(c, cx, cy, fx, fy) {
+  const ox = Math.round(cx), oy = Math.round(cy), hw = Math.floor(c.width / 2), hh = Math.floor(c.height / 2);
+  if (!fx && !fy) { ctx.drawImage(c, ox - hw, oy - hh); return; }
+  ctx.save(); ctx.translate(ox, oy); ctx.scale(fx ? -1 : 1, fy ? -1 : 1); ctx.drawImage(c, -hw, -hh); ctx.restore();
+}
+
+function drawRays() {
+  const len = iceBroken ? 240 : 130; // in the cavern the light comes down the shaft
+  if (CY > SURF + len + 10) return;
+  ctx.fillStyle = '#e6fbff';
+  for (let i = 0; i < 5; i++) {
+    const x0 = (iceBroken ? SH0 + 8 + i * 24 : 140 + i * 38) + Math.sin(t * .4 + i * 1.7) * (iceBroken ? 4 : 12), w = 5 + (i % 3) * 2;
+    for (let d = 0; d < len; d++) {
+      const sy = SURF + 3 + d - CY;
+      if (sy < 0 || sy >= H) continue;
+      ctx.globalAlpha = Math.ceil((1 - d / len) * 3) / 3 * .08;
+      ctx.fillRect(Math.round(x0 + d * .35), sy, w, 1);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+function drawKelp() {
+  if (iceBroken) return;
+  for (const k of kelps) {
+    const base = bedAt(k.x) + 2;
+    if (base - k.h - CY > H || base - CY < 0) continue;
+    for (let s = 0; s < k.h; s++) {
+      const y = base - s, x = k.x + Math.round(Math.sin(t * 1.2 + s * .08 + k.ph) * (s / k.h) * 4);
+      ctx.fillStyle = s % 6 < 3 ? '#2e6b3e' : '#285e37';
+      ctx.fillRect(x, y - CY, 2, 1);
+      if (s % 9 === 4) { ctx.fillStyle = '#4a9a5a'; ctx.fillRect(x + (s % 18 < 9 ? 2 : -2), y - CY, 2, 1); }
+    }
+  }
+}
+function drawJelly(j) {
+  const sx = Math.round(j.x), sy = Math.round(j.y - CY);
+  if (sy < -16 || sy > H + 4) return;
+  const pulse = Math.sin(j.ph) > .3 ? 1 : 0, rows = [2, 3, 4, 4 + pulse];
+  ctx.globalAlpha = .85;
+  rows.forEach((hw, i) => { ctx.fillStyle = i === 0 ? '#ffd6f0' : i === 3 ? '#b46aa4' : '#f0a8d8'; ctx.fillRect(sx - hw, sy + i, hw * 2 + 1, 1); });
+  ctx.fillStyle = '#d48cc4';
+  for (const k of [-3, -1, 1, 3]) for (let s = 0; s < 7; s++) ctx.fillRect(sx + k + Math.round(Math.sin(j.ph * 1.5 + s * .8 + k) * .8), sy + 4 + s, 1, 1);
+  ctx.globalAlpha = 1;
+}
+function drawFish(f) {
+  const s = fishSprite(f.T);
+  let y = f.y - CY;
+  if (y < -20 || y > H + 20) return;
+  if (f.state === 'hooked' && f.thrash > 0) y += Math.floor(t * 30) % 2 ? 1 : -1;
+  drawSpr(s.c, f.x, y, f.dir < 0, false);
+}
+function drawSurface() {
+  for (let x = iceBroken ? SH0 : ICE_EDGE, xe = iceBroken ? SH1 : W; x < xe; x++) { // in the cavern only the shaft has a water line
+    const wy = surfaceAt(x), sy = wy - CY;
+    if (sy > H || sy < -4) continue;
+    ctx.fillStyle = '#58bfdc'; ctx.fillRect(x, sy, 1, SURF + 3 - wy);
+    ctx.fillStyle = '#c9f0fb'; ctx.fillRect(x, sy, 1, 1);
+  }
+  if (iceBroken) return;
+  ctx.fillStyle = '#f4fdff';
+  for (let i = 0; i < 8; i++) {
+    if (Math.sin(t * 3 + i * 2) < 0) continue;
+    const span = W - ICE_EDGE - 4, x = ICE_EDGE + ((i * 47 + t * 10 * (i % 2 ? 1 : -1)) % span + span) % span;
+    ctx.fillRect(Math.round(x), surfaceAt(x) + 2 - CY, 3, 1);
+  }
+}
+function drawSwimmingSeal(g) {
+  if (!swim) return;
+  const near = fishes.some(f => Math.hypot(f.x - g.mx, f.y - g.my) < 18) || (shark && shark.state !== 'dead' && Math.hypot(shark.x - g.mx, shark.y - g.my) < shark.len * .5);
+  const mouth = (seal.chew > 0 && Math.floor(seal.chew * 14) % 2 === 0) || (near && seal.chew <= 0) ? 1 : 0;
+  const eyes = state === 'dead' ? 'dead' : seal.blink > 0 ? 'blink' : 'open';
+  const s = sealSprite(seal.disp, mouth, eyes, false, myPal());
+  const c = (swim.hurt > 0 || swim.nip > 0) && Math.floor(t * 16) % 2 ? tinted(s.c, '#ffffff') : s.c;
+  ctx.save();
+  ctx.translate(Math.round(g.left + g.w / 2), Math.round(g.top + g.h / 2 - CY) + Math.round(Math.sin(t * 3)));
+  if (swim.dir < 0) ctx.scale(-1, 1);
+  ctx.drawImage(c, -Math.round(g.w / 2) - s.pad, -Math.round(g.h / 2) - s.pad);
+  ctx.restore();
+  if ((state === 'boss' || state === 'roam') && seal.size < 18 && Math.floor(t * 3) % 2) ctxt('HUNGRY!', g.left + g.w / 2, g.top - 9 - CY, '#ff7a6a');
+}
+function drawNerpas() {
+  for (const n of nerpas) {
+    const y = n.y - CY;
+    if (y < -20 || y > H + 20) continue;
+    const s = sealSprite(18, 0, n.blink > 0 ? 'blink' : 'open', false, NERPA_PAL);
+    ctx.save(); ctx.translate(Math.round(n.x), Math.round(y) + Math.round(Math.sin(t * 2 + n.ph)));
+    if (n.dir < 0) ctx.scale(-1, 1);
+    ctx.drawImage(s.c, -9 - s.pad, -7 - s.pad); ctx.restore();
+    if (swim && Math.hypot(n.x - swim.x, n.y - swim.y) < 70 && Math.floor(t * 2) % 2) { // it likes company
+      ctx.fillStyle = '#ff7aa0';
+      ['01010', '11111', '01110', '00100'].forEach((row, ry) => { for (let rx = 0; rx < 5; rx++) if (row[rx] === '1') ctx.fillRect(Math.round(n.x) + rx - 2, Math.round(y) - 16 + ry, 1, 1); });
+    }
+  }
+}
+function drawShark() {
+  const S = shark; if (!S) return;
+  const y = S.y - CY; if (y < -30 || y > H + 30) return;
+  const open = S.state === 'charge' || (S.state === 'tele' && S.timer < .25);
+  const base = sharkSprite(open), c = S.hurt > 0 && Math.floor(t * 20) % 2 ? tinted(base, '#ffffff') : base;
+  const shiver = S.state === 'tele' ? (Math.floor(t * 20) % 2 ? 1 : -1) : 0;
+  drawSpr(c, S.x + shiver, y + (S.state === 'dead' ? 0 : Math.round(Math.sin(t * 2))), S.dir < 0, S.state === 'dead');
+  const hx = S.x + S.dir * S.len * .3;
+  if (S.state === 'stun') {
+    ctx.fillStyle = '#ffe36a';
+    for (let i = 0; i < 3; i++) { const a = t * 5 + i * 2.1; ctx.fillRect(Math.round(hx + Math.cos(a) * 8), Math.round(y - 18 + Math.sin(a) * 2), 2, 2); }
+  }
+  if (S.state === 'tele' && Math.floor(t * 8) % 2) txt('!', hx - 1, y - 26, '#ff5040');
+}
+function drawMinions() {
+  const s = fishSprite(PUP);
+  for (const m of minions) {
+    const y = m.y - CY;
+    if (y < -20 || y > H + 20) continue;
+    drawSpr(s.c, m.x, y + Math.round(Math.sin(t * 6 + m.ph)), m.dir < 0, false);
+  }
+}
+function drawIceChunks() {
+  if (!iceBroken) return;
+  for (const c of iceChunks) {
+    const y = surfaceAt(c.x) - 1 + Math.round(Math.sin(t * 2 + c.ph)) - CY;
+    ctx.fillStyle = '#f6fcff'; ctx.fillRect(Math.round(c.x), y - 1, c.w, 2);
+    ctx.fillStyle = '#bfe2f0'; ctx.fillRect(Math.round(c.x), y + 1, c.w, 1);
+  }
+}
+function drawLostRod() {
+  // the rod she dropped, lying on what is left of the floe
+  bresenham(SH1 + 8, ICE_TOP + 1, SH1 + 30, ICE_TOP - 5, (x, y) => px(x, y, '#8a5a2c'));
+  px(SH1 + 30, ICE_TOP - 5, '#e04a3a');
+}
+function drawSeal() {
+  const g = sealGeo(), dead = state === 'dead';
+  if (swimming()) { drawSwimmingSeal(g); return; }
+  // shadow on the snow
+  ctx.fillStyle = '#b8d4e2';
+  const rx = g.w * .46 * Math.max(.4, 1 + sealJump().dy / 60);
+  for (let dy = -1; dy <= 1; dy++) { const hw = Math.round(rx * Math.sqrt(1 - (dy / 2) ** 2)); ctx.fillRect(Math.round(g.left + g.w * .45 - hw), ICE_TOP + 2 + dy - CY, hw * 2, 1); }
+  const eyes = dead ? 'dead' : seal.blink > 0 ? 'blink' : 'open';
+  const mouth = !dead && (flights.some(f => f.p > .5) || (seal.chew > 0 && Math.floor(seal.chew * 14) % 2 === 0)) ? 1 : 0;
+  const s = sealSprite(seal.disp, mouth, eyes, false, myPal());
+  const bob = seal.chew > 0 ? Math.floor(seal.chew * 14) % 2 : 0;
+  const ang = sealJump().ang;
+  if (ang) {
+    ctx.save();
+    ctx.translate(Math.round(g.left + g.w / 2), Math.round(g.top + g.h / 2 - CY + bob));
+    ctx.rotate(ang);
+    ctx.drawImage(s.c, -Math.round(g.w / 2) - s.pad, -Math.round(g.h / 2) - s.pad);
+    ctx.restore();
+  } else ctx.drawImage(s.c, g.left - s.pad, g.top - s.pad - CY + bob);
+  if (state === 'play' && seal.size < 18 && Math.floor(t * 3) % 2) ctxt('HUNGRY!', g.left + g.w / 2, g.top - 9 - CY, '#ff7a6a');
+}
+function drawRodAndLine() {
+  const r = rodGeo(sealGeo(), true);
+  // rod: quadratic curve, thicker at the handle
+  const n = Math.ceil(Math.hypot(r.tx - r.bx, r.ty - r.by) * 1.5);
+  let reelAt = null;
+  for (let i = 0; i <= n; i++) {
+    const q = i / n, a = (1 - q) ** 2, b = 2 * (1 - q) * q, c = q * q;
+    const x = a * r.bx + b * r.cx + c * r.tx, y = a * r.by + b * r.cy + c * r.ty;
+    const col = q < .22 ? '#3c2414' : q < .3 ? '#c9a067' : '#8a5a2c';
+    px(x, y, col);
+    if (q < .45) px(x + 1, y, q < .22 ? '#2a180c' : '#6b4320');
+    if (!reelAt && q >= .18) reelAt = [x, y];
+  }
+  px(r.tx, r.ty, '#e04a3a');
+  ctx.fillStyle = '#9aa4ad'; ctx.fillRect(Math.round(reelAt[0]) - 3, Math.round(reelAt[1]) - CY, 3, 3);
+  ctx.fillStyle = '#5d6670'; ctx.fillRect(Math.round(reelAt[0]) - 2, Math.round(reelAt[1]) + 1 - CY, 1, 1);
+
+  // line: rod tip -> bobber (sagging) -> hook
+  const under = hook.y > SURF + 2;
+  const bob = under
+    ? { x: hook.x + clamp(-hook.vx * .08, -4, 4), y: surfaceAt(hook.x) - 2 + (bobDip > 0 ? 2 : 0) }
+    : { x: hook.x, y: Math.max(r.ty + 2, hook.y - 9) };
+  const hot = tension > .65 && Math.floor(t * 12) % 2;
+  const lineCol = hot ? '#ff5a4a' : hex(mix('#f2efe6', '#ff8a6a', clamp(tension, 0, 1)));
+  const sag = (1 - Math.min(1, tension * 1.5)) * Math.min(14, Math.hypot(bob.x - r.tx, bob.y - r.ty) * .18);
+  const mx = (r.tx + bob.x) / 2, my = (r.ty + bob.y) / 2 + sag;
+  let prev = [r.tx, r.ty];
+  for (let i = 1; i <= 16; i++) {
+    const q = i / 16, a = (1 - q) ** 2, b = 2 * (1 - q) * q, c = q * q;
+    const p = [a * r.tx + b * mx + c * bob.x, a * r.ty + b * my + c * bob.y];
+    bresenham(prev[0], prev[1], p[0], p[1], (x, y) => px(x, y, lineCol));
+    prev = p;
+  }
+  bresenham(bob.x, bob.y + 2, hook.x, hook.y - 4, (x, y) => px(x, y, y > SURF ? (hot ? '#ff5a4a' : '#bcd6dc') : lineCol));
+  // bobber
+  const bx = Math.round(bob.x) - 1, by = Math.round(bob.y) - CY;
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(bx, by - 1, 3, 2);
+  ctx.fillStyle = '#e03a30'; ctx.fillRect(bx, by + 1, 3, 2);
+  ctx.fillStyle = '#2a1a14'; ctx.fillRect(bx + 1, by - 2, 1, 1);
+  // hook + worm
+  const hx = Math.round(hook.x), hy = Math.round(hook.y) - CY;
+  ctx.fillStyle = hook.stun > 0 && Math.floor(t * 20) % 2 ? '#fff27a' : '#c8d0d8';
+  [[0, -4], [0, -3], [0, -2], [0, -1], [-1, 0], [-2, -1], [-2, -2]].forEach(([dx, dy]) => ctx.fillRect(hx + dx, hy + dy, 1, 1));
+  if (!hooked) {
+    const wig = Math.floor(t * 4) % 2;
+    ctx.fillStyle = '#e8838f';
+    ctx.fillRect(hx + 1, hy - 2 + wig, 1, 1); ctx.fillRect(hx + 1, hy - 1, 1, 1); ctx.fillRect(hx, hy + 1, 1, 1); ctx.fillRect(hx - 1, hy + 1 - wig, 1, 1);
+  }
+  if (hooked && hooked.thrash > 0 && Math.floor(t * 6) % 2) txt('!', hx - 1, hy - 14, '#ff5040');
+}
+function drawFlights() {
+  for (const fl of flights) {
+    const s = fishSprite(fl.T), p = Math.min(1, fl.p);
+    const inset = p > .85 ? (p - .85) / .15 : 0;
+    drawSpr(s.c, fl.x + fl.T.len / 2 * (1 - inset), fl.y - CY, true, Math.floor(fl.p * 12) % 2 === 1);
+  }
+}
+function drawParts() {
+  for (const p of parts) {
+    const x = Math.round(p.x), y = Math.round(p.y - CY);
+    ctx.globalAlpha = clamp(p.life * 2, 0, 1);
+    ctx.fillStyle = p.col;
+    if (p.heart) ['01010', '11111', '01110', '00100'].forEach((row, ry) => { for (let rx = 0; rx < 5; rx++) if (row[rx] === '1') ctx.fillRect(x + rx - 2, y + ry, 1, 1); });
+    else ctx.fillRect(x, y, 1, 1);
+  }
+  ctx.globalAlpha = 1;
+  const vx0 = curZone ? Math.round(camX) : 0;
+  for (const p of pops) {
+    if (p.delay > 0) continue;
+    ctx.globalAlpha = clamp(p.life * 2, 0, 1);
+    const half = tw(p.s) / 2;
+    ctxt(p.s, clamp(p.x, vx0 + half + 2, vx0 + W - half - 2), p.y - CY, p.col); // keep the text on screen
+  }
+  ctx.globalAlpha = 1;
+}
+function drawGhost() {
+  if (!ghost) return;
+  const s = sealSprite(14, 0, 'dead', true), a = clamp(1 - (deadT - 3) / 2, 0, .8);
+  if (a <= 0) return;
+  ctx.globalAlpha = a;
+  const gx = ghost.x + Math.sin(deadT * 2) * 4, gy = ghost.y - CY;
+  drawSpr(s.c, gx, gy, false, false);
+  ctx.fillStyle = '#ffe36a';
+  for (let x = -4; x <= 4; x++) { const yy = Math.round(Math.abs(x) < 3 ? 0 : 1); ctx.fillRect(Math.round(gx) + x, Math.round(gy) - 10 + yy, 1, 1); ctx.fillRect(Math.round(gx) + x, Math.round(gy) - 8 - yy, 1, 1); }
+  ctx.globalAlpha = 1;
+}
+
+// ---- HUD (parchment and wood, like a farm-game menu) ----
+const INK = '#4a2a12';
+function panel(x, y, w, h) {
+  ctx.fillStyle = '#5b3418'; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = '#b9793c'; ctx.fillRect(x + 1, y + 1, w - 2, h - 2);
+  ctx.fillStyle = '#f4e2bb'; ctx.fillRect(x + 2, y + 2, w - 4, h - 4);
+  ctx.fillStyle = '#e6cf9f'; ctx.fillRect(x + 2, y + h - 3, w - 4, 1);
+}
+function bar(x, y, w, h, frac, col) {
+  ctx.fillStyle = '#5b3418'; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = '#2a1a0e'; ctx.fillRect(x + 1, y + 1, w - 2, h - 2);
+  const fw = Math.round((w - 2) * clamp(frac, 0, 1));
+  ctx.fillStyle = col; ctx.fillRect(x + 1, y + 1, fw, h - 2);
+  ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fillRect(x + 1, y + 1, fw, 1);
+}
+function drawHUD() {
+  const showLine = !!hooked, showShark = !!shark, pw = 122, ph = showLine || showShark ? 33 : 25, x = W - pw - 2, y = 2;
+  panel(x, y, pw, ph);
+  const danger = seal.size < 18, sizeCol = danger ? (Math.floor(t * 4) % 2 ? '#e04a3a' : '#a02a1a') : seal.size < 26 ? '#f0a030' : '#58c04a';
+  txt('SIZE', x + 5, y + 5, INK, 1, null);
+  bar(x + 24, y + 4, 56, 7, Math.sqrt(Math.max(0, seal.size - MIN_SIZE) / (MAX_SIZE - MIN_SIZE)), sizeCol);
+  txt(kg(seal.size) + 'KG', x + 84, y + 5, INK, 1, null);
+  txt('FISH ' + caught, x + 5, y + 15, INK, 1, null);
+  const bs = 'BEST ' + Math.max(best.fish, caught);
+  txt(bs, x + pw - 5 - tw(bs), y + 15, INK, 1, null);
+  if (showLine) {
+    txt('LINE', x + 5, y + 24, INK, 1, null);
+    bar(x + 24, y + 23, 56, 7, tension, tension > .7 ? '#e04a3a' : tension > .4 ? '#f0c030' : '#7cc4e8');
+    if (hooked.thrash > 0 && Math.floor(t * 6) % 2) txt('PULLING!', x + 84, y + 24, '#c0301a', 1, null);
+  }
+  if (showShark) {
+    txt('SHARK', x + 5, y + 24, INK, 1, null);
+    bar(x + 28, y + 23, 52, 7, shark.hp / shark.max, '#e04a3a');
+    if (shark.state === 'stun' && Math.floor(t * 6) % 2) txt('BITE!', x + 84, y + 24, '#2a7a2a', 1, null);
+  }
+  const depthY = swimming() && swim ? swim.y : hook.y;
+  if ((state === 'play' || state === 'boss' || state === 'roam') && depthY > SURF + 2) txt('DEPTH ' + Math.round((depthY - SURF) / 10) + 'M', 4, H - 9, '#e6f6ff');
+  if (state === 'roam' && curZone) {
+    ctxt(curZone.name, W / 2, 5, '#ffffff');
+    if (curZone.id === 'baikal' && !best.skinUnlocked) ctxt('NERPAS FED ' + (best.fed || 0) + '/10', W / 2, 14, '#ffb0d0');
+    if (roamT < 8) ctxt('SWIM EAST FOR NEW WATERS. T: FAST TRAVEL', W / 2, H - 18, '#ffffff');
+    else if (curZone.id === 'baikal' && !best.skinUnlocked && roamT < 60) ctxt('FISH EATEN NEXT TO A NERPA ARE SHARED WITH IT', W / 2, H - 18, '#ffffff');
+  }
+  if (bossReady() && Math.floor(t * 2) % 2) ctxt('JOURNAL COMPLETE! PRESS B OR TAP THE SEAL TO SMASH THE ICE', W / 2, H - 18, '#ffe36a');
+  if (state === 'boss' && bossT < 10) ctxt(bossT < 5 ? 'DODGE THE CHARGE, THEN BITE ITS TAIL OR BITE IT WHILE DAZED' : 'EAT FISH TO GROW BACK. MEET THE PUPS HEAD-ON TO EAT THEM', W / 2, H - 18, '#ffffff');
+  if (state === 'play' && caught === 0 && !hintDone) {
+    let hint;
+    if (hooked) hint = hooked.thrash > 0 ? "LET GO OF UP WHILE IT THRASHES!" : 'HOLD UP TO REEL IT IN';
+    else if (hook.y <= SURF + 2) hint = 'PRESS DOWN TO LOWER THE HOOK';
+    else hint = 'HOLD STILL NEAR A FISH TO LURE IT';
+    ctxt(hint, W / 2 + 20, H - 18, '#ffffff');
+  }
+  if (caught > 0) hintDone = true;
+}
+function drawTitle() {
+  ctx.fillStyle = 'rgba(8,16,28,.35)'; ctx.fillRect(0, 0, W, H);
+  panel(50, 18, 220, 146);
+  ctxt('FOKA', W / 2, 26, '#2f6fa0', 5, '#5b3418');
+  ctxt("A SEAL'S FISHING STORY", W / 2, 56, INK, 1, null);
+  const lines = [
+    'ARROWS / WASD OR DRAG: MOVE THE HOOK',
+    'DOWN LOWERS THE LINE, UP REELS IN',
+    'HOLD THE BAIT STILL TO LURE FISH',
+    'STOP REELING WHEN A FISH THRASHES',
+    'OR THE LINE SNAPS. AVOID JELLYFISH.',
+    'EVERY FISH MAKES HER BIGGER. HUNGRY,',
+    'SHE SHRINKS AND WILL NOT SURVIVE.',
+    '',
+    'FILL THE FISH JOURNAL (J) TO SMASH',
+    'THE ICE AND FIGHT THE SHARK.',
+  ];
+  lines.forEach((l, i) => ctxt(l, W / 2, 68 + i * 8, INK, 1, null));
+  if (Math.floor(t * 2) % 2) ctxt('PRESS SPACE OR TAP TO START', W / 2, 146, '#b03a1a', 1, null);
+  if (best.fish) ctxt('BEST: ' + best.fish + ' FISH, ' + best.kg + ' KG' + (best.sharks ? ', ' + best.sharks + ' SHARKS' : ''), W / 2, 155, '#7a5a3a', 1, null);
+  if (best.sharks) ctxt('R: FREE ROAM THE WIDE WATERS' + (best.skinUnlocked ? '   K: SKIN' : ''), W / 2, 138, '#2a7a2a', 1, null);
+}
+function drawWon() {
+  if (wonT < 2) return;
+  ctx.fillStyle = 'rgba(8,16,28,.45)'; ctx.fillRect(0, 0, W, H);
+  panel(60, 36, 200, 108);
+  ctxt('SHE BEAT THE SHARK!', W / 2, 46, '#2a7a2a', 2, null);
+  const m = Math.floor(elapsed / 60), s = String(Math.floor(elapsed % 60)).padStart(2, '0');
+  const rows = [
+    ['FISH EATEN', String(caught)],
+    ['PEAK WEIGHT', kg(peak) + ' KG'],
+    ['SURVIVED', m + ':' + s],
+    ['SHARKS BEATEN', String(best.sharks || 0)],
+  ];
+  rows.forEach(([a, b], i) => { txt(a, 74, 70 + i * 10, INK, 1, null); txt(b, 246 - tw(b), 70 + i * 10, INK, 1, null); });
+  if (Math.floor(t * 2) % 2) ctxt('SPACE OR TAP TO EXPLORE THE WIDE WATERS', W / 2, 130, '#b03a1a', 1, null);
+}
+function drawJournalButton() {
+  panel(2, 2, 46, 13);
+  ctx.fillStyle = '#8a3a2a'; ctx.fillRect(5, 5, 7, 7);   // a little red book
+  ctx.fillStyle = '#f8f0dc'; ctx.fillRect(7, 6, 4, 5);
+  ctx.fillStyle = '#8a3a2a'; ctx.fillRect(9, 6, 1, 5);
+  txt(journalTotal() + '/' + speciesTotal(), 15, 6, journalCount() >= FISH.length ? '#2a7a2a' : INK, 1, null);
+  if (state === 'roam') { panel(50, 2, 18, 13); txt('T', 56, 6, INK, 1, null); } // fast travel
+}
+function drawTravel() {
+  ctx.fillStyle = 'rgba(8,16,28,.5)'; ctx.fillRect(0, 0, W, H);
+  panel(90, 40, 140, 100);
+  ctxt('FAST TRAVEL', W / 2, 48, INK, 1, null);
+  ZONES.forEach((z, i) => {
+    const v = (best.visited || []).includes(z.id), y = 62 + i * 14;
+    if (i === travelSel) { ctx.fillStyle = '#e6cf9f'; ctx.fillRect(94, y - 3, 132, 12); }
+    txt(v ? z.name : '? ? ?', 100, y, v ? INK : '#9a8868', 1, null);
+    if (z === curZone) txt('*', 216, y, '#b03a1a', 1, null);
+  });
+  ctxt('UP/DOWN + SPACE, OR TAP. T: CLOSE', W / 2, 126, '#7a5a3a', 1, null);
+}
+function drawJournal() {
+  ctx.fillStyle = 'rgba(8,16,28,.5)'; ctx.fillRect(0, 0, W, H);
+  panel(8, 6, 304, 168);
+  const page = ZONES[journalPage], list = zoneSpecies(page);
+  ctxt('< ' + page.name + '  ' + list.filter(T => journal[T.name]).length + '/' + list.length + ' >', W / 2, 12, INK, 1, null);
+  list.forEach((T, i) => {
+    const x = 12 + (i % 3) * 100, y = 24 + Math.floor(i / 3) * 28, have = journal[T.name] > 0, s = fishSprite(T).c;
+    ctx.fillStyle = have ? '#e6cf9f' : '#dcc89c'; ctx.fillRect(x, y, 98, 26);
+    ctx.drawImage(have ? s : tinted(s, '#9a8868'), x + 23 - Math.floor(s.width / 2), y + 13 - Math.floor(s.height / 2));
+    if (have) {
+      txt(T.name, x + 46, y + 5, INK, 1, null);
+      txt('CAUGHT X' + journal[T.name], x + 46, y + 14, '#7a5a3a', 1, null);
+    } else {
+      txt('? ? ?', x + 46, y + 5, '#8a7a5a', 1, null);
+      txt(T.dmin >= 300 ? 'SEABED' : T.dmin >= 120 ? 'DEEP' : 'SHALLOW', x + 46, y + 14, '#8a7a5a', 1, null);
+    }
+  });
+  const ready = bossReady();
+  ctxt(ready && journalPage === 0 ? 'COMPLETE! PRESS B TO SMASH THE ICE AND FIGHT THE SHARK' : 'LEFT/RIGHT: PAGE   J OR TAP HERE: CLOSE', W / 2, 166, ready && journalPage === 0 ? '#b03a1a' : '#7a5a3a', 1, null);
+}
+function drawDead() {
+  if (deadT < 1.5) return;
+  ctx.fillStyle = 'rgba(8,16,28,.45)'; ctx.fillRect(0, 0, W, H);
+  panel(70, 36, 180, 108);
+  ctxt('SHE STARVED...', W / 2, 46, '#8a2a1a', 2, null);
+  const m = Math.floor(elapsed / 60), s = String(Math.floor(elapsed % 60)).padStart(2, '0');
+  const rows = [
+    ['FISH EATEN', String(caught)],
+    ['BIGGEST CATCH', biggest ? biggest.name : 'NONE'],
+    ['PEAK WEIGHT', kg(peak) + ' KG'],
+    ['SURVIVED', m + ':' + s],
+    ['BEST', best.fish + ' FISH'],
+  ];
+  rows.forEach(([a, b], i) => { txt(a, 84, 68 + i * 10, INK, 1, null); txt(b, 236 - tw(b), 68 + i * 10, INK, 1, null); });
+  if (Math.floor(t * 2) % 2) ctxt('SPACE OR TAP TO TRY AGAIN', W / 2, 130, '#b03a1a', 1, null);
+}
+
+function drawRoamSurface(CX) {
+  for (let sx = 0; sx < W; sx++) {
+    const x = CX + sx, zz = zoneAt(x), wy = surfaceAt(x), sy = wy - CY;
+    if (sy > H || sy < -4 || (zz.id === 'arctic' && x < ICE_EDGE)) continue;
+    ctx.fillStyle = zz.surf; ctx.fillRect(x, sy, 1, SURF + 3 - wy);
+    ctx.fillStyle = hex(mix(zz.surf, '#ffffff', .6)); ctx.fillRect(x, sy, 1, 1);
+  }
+}
+function renderRoam() {
+  CY = Math.round(camY);
+  const CX = Math.round(camX), z = curZone;
+  ctx.fillStyle = '#0b1622'; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  if (shake > 0) ctx.translate(Math.round(rand(-2, 2)), Math.round(rand(-2, 2)));
+  ctx.translate(-CX, 0);
+  for (const zz of ZONES) if (zz.c && zz.ox < CX + W && zz.ox + zz.c.width > CX) ctx.drawImage(zz.c, zz.ox, -CY);
+  for (let i = 1; i < ZONES.length; i++) { // crossfade the western biome over the eastern one across their seam
+    const B = ZONES[i].x0, L = ZONES[i - 1];
+    if (!L.c || B + OV < CX || B - OV > CX + W) continue;
+    for (let x = B - OV; x < B + OV; x += 4) {
+      ctx.globalAlpha = 1 - (x - (B - OV)) / (2 * OV);
+      ctx.drawImage(L.c, x - L.ox, 0, 4, ZH, x, -CY, 4, ZH);
+    }
+    ctx.globalAlpha = 1;
+  }
+  if (CY < SURF) for (const c of clouds) ctx.drawImage(c.c, Math.round(c.x) + CX, c.y - CY);
+  ctx.fillStyle = '#cdefff';
+  for (const b of bubbles) { const y = Math.round(b.y - CY); if (y >= 0 && y < H) { ctx.globalAlpha = .7; ctx.fillRect(Math.round(b.x), y, b.r, b.r); } }
+  ctx.globalAlpha = 1;
+  for (const f of fishes) drawFish(f);
+  drawHostiles();
+  drawNerpas();
+  drawSeal();
+  ctx.restore();
+  const span = roamBed(swim.x) - SURF, dk = roamDark(swim.x);
+  for (let sy = 0; sy < H; sy += 4) { // depth darkness, blended between biomes
+    const a = clamp((sy + CY - SURF) / span, 0, 1) * dk;
+    if (a <= 0) continue;
+    ctx.fillStyle = `rgba(3,8,22,${Math.floor(a * 10) / 10})`; ctx.fillRect(0, sy, W, 4);
+  }
+  ctx.save(); ctx.translate(-CX, 0);
+  for (const f of fishes) if (f.T.lure && f.T.spr && Math.sin(t * 3 + f.ph) > -.5) {
+    const lx = Math.round(f.x + f.dir * f.T.len * .47), ly = Math.round(f.y - f.T.spr.h / 2 - .5 - CY);
+    ctx.fillStyle = '#fff27a';
+    ctx.globalAlpha = .16; ctx.fillRect(lx - 3, ly - 3, 7, 7);
+    ctx.globalAlpha = .3; ctx.fillRect(lx - 2, ly - 2, 5, 5);
+    ctx.globalAlpha = 1;
+  }
+  if (z.id === 'mariana') { // twinkling plankton
+    ctx.fillStyle = '#b0ffd0';
+    for (let i = 0; i < 30; i++) { const x = CX + ((i * 97 + Math.floor(t * 2 + i) * 13) % W), y = CY + ((i * 61) % H); if (y > SURF + 350 && Math.sin(t * 4 + i) > .6) ctx.fillRect(x, y - CY, 1, 1); }
+  }
+  drawRoamSurface(CX);
+  drawGhost();
+  drawParts();
+  ctx.restore();
+  drawHUD(); drawJournalButton();
+  if (state === 'dead') drawDead();
+  if (travelOpen) drawTravel();
+  if (journalOpen) drawJournal();
+  if (paused) {
+    ctx.fillStyle = 'rgba(8,16,28,.5)'; ctx.fillRect(0, 0, W, H);
+    ctxt('PAUSED', W / 2, 80, '#ffffff', 3);
+    ctxt('P OR TAP TO RESUME   M: SOUND ' + (muted ? 'OFF' : 'ON'), W / 2, 104, '#cfe6ff');
+  }
+}
+function render() {
+  if (curZone) { renderRoam(); return; }
+  CY = Math.round(camY);
+  ctx.save();
+  if (shake > 0) ctx.translate(Math.round(rand(-2, 2)), Math.round(rand(-2, 2)));
+  ctx.drawImage(bg, 0, CY, W, H, 0, 0, W, H);
+  if (CY < SURF) for (const c of clouds) ctx.drawImage(c.c, Math.round(c.x), c.y - CY);
+  drawRays();
+  drawKelp();
+  ctx.fillStyle = '#cdefff';
+  for (const b of bubbles) { const y = Math.round(b.y - CY); if (y >= 0 && y < H) { ctx.globalAlpha = .7; ctx.fillRect(Math.round(b.x), y, b.r, b.r); } }
+  ctx.globalAlpha = 1;
+  for (const j of jellies) drawJelly(j);
+  for (const f of fishes) if (f !== hooked) drawFish(f);
+  if (hooked) drawFish(hooked);
+  if (iceBroken) { drawMinions(); drawSeal(); drawShark(); }
+  ctx.drawImage(shade, 0, CY, W, H, 0, 0, W, H);
+  // anglerfish lures glow through the deep-water darkness
+  for (const f of fishes) if (f.T.lure && f.T.spr && Math.sin(t * 3 + f.ph) > -.5) {
+    const lx = Math.round(f.x + f.dir * f.T.len * .47), ly = Math.round(f.y - f.T.spr.h / 2 - .5 - CY);
+    ctx.fillStyle = '#fff27a';
+    ctx.globalAlpha = .16; ctx.fillRect(lx - 3, ly - 3, 7, 7);
+    ctx.globalAlpha = .3; ctx.fillRect(lx - 2, ly - 2, 5, 5);
+    ctx.globalAlpha = 1;
+  }
+  drawSurface();
+  drawIceChunks();
+  if (!iceBroken && CY < ICE_TOP + 4) drawSeal();
+  if (iceBroken) drawLostRod(); else drawRodAndLine();
+  drawFlights();
+  drawGhost();
+  ctx.fillStyle = '#ffffff';
+  for (const f of flakes) { const y = Math.round(f.y - CY); if (y >= 0 && y < H) ctx.fillRect(Math.round(f.x), y, 1, 1); }
+  drawParts();
+  ctx.restore();
+  if (state !== 'title') drawHUD();
+  drawJournalButton();
+  if (state === 'title') drawTitle();
+  if (state === 'dead') drawDead();
+  if (state === 'won') drawWon();
+  if (journalOpen) drawJournal();
+  if (paused) {
+    ctx.fillStyle = 'rgba(8,16,28,.5)'; ctx.fillRect(0, 0, W, H);
+    ctxt('PAUSED', W / 2, 80, '#ffffff', 3);
+    ctxt('P OR TAP TO RESUME   M: SOUND ' + (muted ? 'OFF' : 'ON'), W / 2, 104, '#cfe6ff');
+  }
+}
+
+// ================= main loop =================
+reset();
+state = 'title';
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(.05, (now - last) / 1000);
+  last = now;
+  if (!paused && !journalOpen && !travelOpen) update(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
