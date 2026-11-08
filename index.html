@@ -351,6 +351,19 @@ function shapeRegion(shape, u, v, x, y) {
     if (inE(u, v, .48, .56, .4, .42)) return 1;
     return u < .14 && Math.abs(v - .56) <= .06 + (.14 - u) * 1.5 ? 2 : 0;
   }
+  if (shape === 'whale') { // a blunt-headed whale: deep body, a small hump of a dorsal fin, a flipper under, broad flukes behind
+    if (inE(u, v, .58, .5, .38, .44) || inE(u, v, .86, .52, .14, .4)) return 1;
+    if (u < .22 && Math.abs(v - .5) <= .03 + (.22 - u) * 2.2 && Math.abs(v - .5) >= (.22 - u) * .5) return 2;
+    if (u >= .2 && u < .3 && Math.abs(v - .5) <= .1) return 1;
+    if (v < .2 && inE(u, v, .5, .12, .07, .12)) return 2;
+    return inE(u, v, .74, .86, .1, .1) ? 2 : 0;
+  }
+  if (shape === 'squid') { // mantle and fins at the back, a round head with the eyes, and a trailing fan of arms up front
+    if (inE(u, v, .3, .5, .3, .26) || inE(u, v, .62, .5, .11, .3)) return 1;
+    if (u < .32 && Math.abs(v - .5) <= .06 + (.32 - u) * 1.3 && Math.abs(v - .5) >= .2 + (.32 - u) * .2) return 2;
+    if (u >= .68) for (let k = 0; k < 5; k++) { const vk = .18 + k * .16 + Math.sin((u - .68) * 12 + k * 1.7) * .07; if (Math.abs(v - vk) < .048 && u < .78 + Math.abs(Math.sin(k * 2.3)) * .22) return 2; }
+    return 0;
+  }
   if (shape === 'pup') {
     if (inE(u, v, .52, .56, .36, .3) || inE(u, v, .84, .6, .14, .2)) return 1;
     if (u > .4 && u < .58 && v < .3 && v >= .3 - (u - .4) * 1.7) return 2;
@@ -674,17 +687,24 @@ const MARIANA_FISH = [
   { name: 'GIANT ISOPOD', len: 18, ratio: .5, dmin: 1230, dmax: 1250, speed: 5, str: .5, w: 2, back: '#8a8a90', body: '#a8a8b0', belly: '#c8c8d0', fin: '#7a7a80', ol: '#303038', shape: 'flat', stripes: '#6a6a70', eyes: [[.82, .26], [.72, .2]] },
 ];
 // hostile fish: they patrol a haunt, chase her when she comes close and bite; she can eat one head-on once she is heavy enough
+// the swamp's river giant: it hunts her in the water, and only the glow lure tempts it onto a hook
+const ARAPAIMA = { name: 'ARAPAIMA', len: 50, ratio: .28, dmin: 30, dmax: 170, speed: 30, str: 1.7, w: 1.5, back: '#2e4a2a', body: '#5f7f4a', belly: '#c8c89a', fin: '#8a3a3a', ol: '#14200c', spots: '#a83838', eyes: [[.86, .4]], needBait: 3, bite: 5, cd: 2.4, minEat: 90, aggro: 150, count: 1, hostile: true };
 const SWAMP_HOSTILE = [
+  ARAPAIMA,
   { name: 'ALLIGATOR', len: 44, ratio: .2, dmin: 0, dmax: 60, speed: 36, str: 1, w: 0, back: '#3a5a2a', body: '#5a7a3a', belly: '#a8b080', fin: '#4a6a30', ol: '#14200c', stripes: '#2a4420', shape: 'sword', bill: '#5a7a3a', pad: 2, eyes: [[.72, .3]], bite: 4, cd: 2, minEat: 80, aggro: 140, count: 2, hostile: true },
   { name: 'PIRANHA', len: 9, ratio: .5, dmin: 20, dmax: 150, speed: 64, str: .3, w: 0, back: '#7a3a3a', body: '#b85a5a', belly: '#d0c0a0', fin: '#8a3a3a', ol: '#301010', bite: 1.2, cd: 1.6, minEat: 0, aggro: 110, count: 4, hostile: true },
 ];
 const BAIKAL_HOSTILE = [
   { name: 'PIKE', len: 34, ratio: .22, dmin: 10, dmax: 160, speed: 58, str: 1, w: 0, back: '#3a5a3a', body: '#6a8a5a', belly: '#c8d0a8', fin: '#4a6a40', ol: '#18281a', spots: '#8aa070', shape: 'sword', bill: '#6a8a5a', pad: 2, eyes: [[.74, .4]], bite: 3, cd: 2, minEat: 55, aggro: 130, count: 2, hostile: true },
 ];
+// the trench's giant squid keeps to itself until she comes within reach; then it wraps her up and hauls her into the dark
+const GIANT_SQUID = { name: 'GIANT SQUID', len: 60, ratio: .4, dmin: 500, dmax: 1200, speed: 40, str: 2, w: 1.5, back: '#8a3050', body: '#b04868', belly: '#d08098', fin: '#c06080', ol: '#30101c', shape: 'squid', pad: 2, bigEye: true, eyes: [[.6, .42]], needBait: 3, bite: 0, cd: 3, minEat: 95, aggro: 60, count: 1, hostile: true, grab: true, warn: 'KEEP YOUR DISTANCE OR IT DRAGS YOU DOWN' };
 const MARIANA_HOSTILE = [
+  GIANT_SQUID,
   { name: 'GOBLIN SHARK', len: 52, ratio: .24, dmin: 500, dmax: 1200, speed: 46, str: 1.3, w: 0, back: '#8a6a78', body: '#b890a0', belly: '#e0c8d0', fin: '#7a5a68', ol: '#301820', shape: 'sword', bill: '#c8a0a8', pad: 2, eyes: [[.7, .42]], bite: 5, cd: 2.2, minEat: 85, aggro: 150, count: 2, hostile: true },
   { name: 'FANGTOOTH', len: 12, ratio: .5, dmin: 600, dmax: 1200, speed: 42, str: .4, w: 0, back: '#202028', body: '#303040', belly: '#484858', fin: '#282838', ol: '#08080c', bigEye: true, eyes: [[.78, .34]], bite: 1.5, cd: 1.5, minEat: 0, aggro: 100, count: 3, hostile: true },
 ];
+SWAMP_FISH.push(ARAPAIMA); MARIANA_FISH.push(GIANT_SQUID); // the hunters that also take the hook, once she has the glow lure
 const OCEAN_FISH = [
   { name: 'SARDINE', len: 9, ratio: .36, dmin: 6, dmax: 120, speed: 28, str: .15, w: 9, back: '#3f6f93', body: '#aac3d3', belly: '#eef4f7', fin: '#7d9fb4', ol: '#1f3142' },
   { name: 'FLYING FISH', len: 14, ratio: .3, dmin: 2, dmax: 40, speed: 40, str: .3, w: 5, back: '#2f5f9a', body: '#8fb4d8', belly: '#e4eef7', fin: '#5f8fc8', ol: '#17304f' },
@@ -692,6 +712,8 @@ const OCEAN_FISH = [
   { name: 'TUNA', len: 32, ratio: .34, dmin: 60, dmax: 420, speed: 34, str: 1.1, w: 3, back: '#1f3f66', body: '#6f8fae', belly: '#dfe8f0', fin: '#f0c040', ol: '#0e1f36' },
   { name: 'SWORDFISH', len: 40, ratio: .24, dmin: 80, dmax: 520, speed: 40, str: 1.3, w: 2, back: '#2a4a70', body: '#7f9ab8', belly: '#dde6ee', fin: '#3a5a80', ol: '#111f33', shape: 'sword', bill: '#5a6a80', pad: 2, eyes: [[.74, .42]] },
   { name: 'SUNFISH', len: 24, ratio: .8, dmin: 30, dmax: 300, speed: 8, str: .6, w: 2, back: '#6f7f8f', body: '#9faab5', belly: '#d8dee4', fin: '#5f6f7f', ol: '#2a333c', shape: 'puffer', pad: 2, spike: '#9faab5', bigEye: true, eyes: [[.78, .36]], rare: true },
+  // one whale cruises the open ocean at a time; it shrugs off everything but the glow lure, and she cannot simply swim up and eat it
+  { name: 'WHALE', len: 90, ratio: .34, dmin: 40, dmax: 300, speed: 22, str: 2.2, w: 1.2, back: '#2f3f55', body: '#4f6378', belly: '#dfe6ec', fin: '#2a3850', ol: '#111a26', shape: 'whale', pad: 2, eyes: [[.9, .5]], needBait: 3, max: 1 },
 ];
 const OCEAN_HOSTILE = [
   { name: 'BARRACUDA', len: 36, ratio: .16, dmin: 20, dmax: 200, speed: 70, str: 1, w: 0, back: '#4a6a7a', body: '#8fa8b4', belly: '#dfe8ea', fin: '#5a7a8a', ol: '#1a2a34', stripes: '#3a5262', shape: 'sword', bill: '#8fa8b4', pad: 2, eyes: [[.74, .4]], bite: 3, cd: 1.8, minEat: 60, aggro: 140, count: 2, hostile: true },
@@ -717,16 +739,32 @@ for (const z of ZONES) { z.x0 = roamW; roamW += z.w; z.c = null; z.ox = z.x0 ===
 const ROAM_W = roamW;
 const zoneById = id => ZONES.find(z => z.id === id);
 const BIOMES = ZONES.filter((z, i) => ZONES.findIndex(o => o.biome === z.biome) === i); // one journal page per distinct biome
-// perches: places at the surface she can haul out onto and fish with the rod while roaming
-// sx is where her right edge sits (she always casts east), top is the platform's surface, x0..x1 its span
+// lands: stretches of ground at the surface she can haul out onto, galumph along and fish from (she always casts east)
+// top is the walking surface, x0..x1 the span, depth how far the land's body reaches under water (fish and seal pass beneath it,
+// 0 for things on stilts or afloat), wallL marks a west end that is the edge of the world rather than water.
+// The walrus's bait shack stands on the arctic's second island; its door is where walking up opens the shop.
+const LANDS = [];
 {
   const a = zoneById('arctic'), sw = zoneById('swamp'), m = zoneById('mariana');
-  a.perch = { z: a, name: 'ICE FLOE', x0: 0, x1: ICE_EDGE, sx: SEAL_RIGHT, top: ICE_TOP + 2, snow: true, bob: 0 };
-  sw.perch = { z: sw, name: 'DOCK', x0: sw.x0 + 300, x1: sw.x0 + 364, sx: sw.x0 + 356, top: SURF - 5, bob: 0 };
-  m.perch = { z: m, name: 'RAFT', x0: m.x0 + 200, x1: m.x0 + 256, sx: m.x0 + 248, top: SURF - 3, bob: 0, floats: true };
+  LANDS.push({ z: a, name: 'ICE FLOE', kind: 'floe', x0: 0, x1: ICE_EDGE - 4, top: ICE_TOP + 2, depth: 0, snow: true, bob: 0, wallL: true });
+  LANDS.push({ z: a, name: 'BAIT ISLAND', kind: 'island', x0: 380, x1: 520, top: SURF - 6, depth: SURF + 16, snow: true, bob: 0, shop: { x0: 440, x1: 474, door: 464 } });
+  LANDS.push({ z: sw, name: 'BANK', kind: 'bank', x0: sw.x0 + 186, x1: sw.x0 + 364, dock: sw.x0 + 300, top: SURF - 5, depth: SURF + 24, bob: 0 });
+  LANDS.push({ z: sw, name: 'HUMMOCK', kind: 'hummock', x0: sw.x0 + 410, x1: sw.x0 + 458, top: SURF - 4, depth: SURF + 18, bob: 0 });
+  LANDS.push({ z: m, name: 'RAFT', kind: 'raft', x0: m.x0 + 200, x1: m.x0 + 256, top: SURF - 3, depth: 0, bob: 0, floats: true });
+  for (const o of ZONES.filter(z => z.biome === 'ocean')) LANDS.push({ z: o, name: 'SANDBAR', kind: 'sandbar', x0: o.x0 + 190, x1: o.x0 + 262, top: SURF - 3, depth: SURF + 14, bob: 0 }); // somewhere to cast for the whale from
+  for (const z of ZONES) z.lands = LANDS.filter(L => L.z === z);
 }
+const landAt = x => LANDS.find(L => x >= L.x0 && x <= L.x1);
+// bait the walrus sells, paid for in blubber (kg). range widens how far off fish notice the hook, big speeds up how fast the
+// large ones commit (scaled by their length), rare weights the rare species when the biome spawns fish
+const BAITS = [
+  { name: 'WORMS', cost: 0, range: 1, big: 1, rare: 1, note: 'PLAIN OLD WORMS' },
+  { name: 'SHRIMP', cost: 6, range: 1.25, big: 1.8, rare: 1, note: 'MEDIUM FISH BITE SOONER' },
+  { name: 'SQUID', cost: 14, range: 1.5, big: 3, rare: 1.3, note: 'BIG FISH CAN NOT RESIST IT' },
+  { name: 'GLOW LURE', cost: 24, range: 1.9, big: 4, rare: 3, note: 'EVEN THE RARE DEEP ONES COME' },
+];
 const zoneAt = x => ZONES.find(z => x >= z.x0 && x < z.x0 + z.w) || ZONES[ZONES.length - 1];
-const zoneSpecies = z => z.fish.concat(z.hostile);
+const zoneSpecies = z => z.fish.concat(z.hostile.filter(h => !z.fish.includes(h))); // a species that both hunts her and takes the hook is listed once
 const smooth = v => v * v * (3 - 2 * v);
 function roamBlend(x, f) {
   const z = zoneAt(x), i = ZONES.indexOf(z), R = ZONES[i + 1], L = ZONES[i - 1];
@@ -876,6 +914,11 @@ let caught = 0, biggest = null, peak = START_SIZE, elapsed = 0, t = 0, camY = 0,
 let hintDone = false;
 let journalOpen = false, smashing = false, swim = null, shark = null, minions = [], iceChunks = [], shake = 0, bossT = 0, wonT = 0;
 let camX = 0, travelOpen = false, travelSel = 0, journalPage = 0, nerpas = [], hostiles = [], curZone = null, roamT = 0, perch = null;
+// on land: rod is whether she has the rod out (else she galumphs about), gal the stride phase, bait the index into BAITS
+let rod = false, gal = 0, wasAtDoor = false, bait = 0, shopOpen = false, shopSel = 0;
+// air is her breath (1 full, 0 drowned) while roaming; grabbed is the squid holding her, escape her struggle meter, lastSide the last key mashed
+const AIR_T = 40; // seconds of breath
+let air = 1, grabbed = null, escape = 0, lastSide = '', deathCause = '';
 let CY = 0;
 
 // fish journal: species name -> times caught, kept across games
@@ -886,7 +929,7 @@ function saveJournal() { try { localStorage.setItem('foka-journal', JSON.stringi
 const bossReady = () => state === 'play' && !iceBroken && !smashing && journalCount() >= FISH.length;
 const journalTotal = () => BIOMES.reduce((n, z) => n + zoneSpecies(z).filter(T => journal[T.name]).length, 0);
 const speciesTotal = () => BIOMES.reduce((n, z) => n + zoneSpecies(z).length, 0);
-const swimming = () => iceBroken || (!!curZone && !perch); // in the wide waters she swims unless she has hauled out onto a perch
+const swimming = () => iceBroken || (!!curZone && !perch); // in the wide waters she swims unless she has hauled out onto land
 const myPal = () => best.skin === 'baikal' ? NERPA_PAL : SEAL_PAL;
 
 function loadBest() { try { return JSON.parse(localStorage.getItem('foka-best')) || { fish: 0, kg: 0, sharks: 0 }; } catch (e) { return { fish: 0, kg: 0, sharks: 0 }; } }
@@ -904,21 +947,32 @@ function sealJump() {
   const s = clamp((p - .12) / .7, 0, 1), e = s * s * (3 - 2 * s);
   return { dy: -Math.round(Math.sin(p * Math.PI) * (10 + w * .35) * (smashing ? 2.2 : 1)), ang: -Math.round(e * 16) * Math.PI / 8 };
 }
+// galumphing is how a seal crosses land: she bunches up, lifts, then lunges and slides ahead on her belly. gal is the stride
+// phase; through the first half she is hunched (shorter, taller, lifted a little), through the second stretched out long and low
+function galumph() {
+  if (!perch || rod || !swim) return { dy: 0, dw: 0, dh: 0 };
+  const s = Math.sin(gal), w = sealDims(seal.disp).w;
+  return { dy: -Math.round(Math.max(0, s) * 3), dw: -Math.round(s * w * .09), dh: Math.round(s * 3) };
+}
 function sealGeo() {
   const { w, h, bh, extra } = sealDims(seal.disp), up = Math.round(Math.max(0, extra) * .35); // the mouth sits in the head, which keeps its base size; the flipper rides the belly
   if (swimming() && swim) { // swimming: centred on her position, mouth on the side she faces
     const left = swim.x - w / 2, top = swim.y - h / 2;
-    return { w, h, left, top, mx: swim.dir < 0 ? left + .03 * w : left + .97 * w, my: top + up + .58 * bh, bx: left + .44 * w, by: top + .88 * h };
+    return { w, h, extra, left, top, mx: swim.dir < 0 ? left + .03 * w : left + .97 * w, my: top + up + .58 * bh, bx: left + .44 * w, by: top + .88 * h };
   }
-  const right = perch ? perch.sx : SEAL_RIGHT, base = perch ? perch.top + perch.bob : ICE_TOP + 2;
-  const left = right - w, top = base - h + sealJump().dy;
-  return { w, h, left, top, mx: left + .97 * w, my: top + up + .58 * bh, bx: left + .44 * w, by: top + .88 * h };
+  if (perch) { // hauled out: standing on the land at swim.x, her body squashed and stretched by the galumph, facing east once the rod is out
+    const G = galumph(), w2 = Math.max(10, w + G.dw), bh2 = Math.round(w2 * SEAL_RATIO), ex2 = Math.max(5 - bh2, extra + G.dh), h2 = bh2 + ex2, up2 = Math.round(Math.max(0, ex2) * .35);
+    const left = swim.x - w2 / 2, top = perch.top + perch.bob - h2 + sealJump().dy + G.dy, east = rod || swim.dir >= 0;
+    return { w: w2, h: h2, extra: ex2, left, top, mx: east ? left + .97 * w2 : left + .03 * w2, my: top + up2 + .58 * bh2, bx: left + .44 * w2, by: top + .88 * h2 };
+  }
+  const left = SEAL_RIGHT - w, top = ICE_TOP + 2 - h + sealJump().dy;
+  return { w, h, extra, left, top, mx: left + .97 * w, my: top + up + .58 * bh, bx: left + .44 * w, by: top + .88 * h };
 }
-// how far the line may go: from the arctic floe the classic range, from a perch out across its own biome
+// how far the line may go: from the arctic floe the classic range, from land out across its own biome, past the land's east end
 function hookBounds() {
   if (!perch) return { x0: HOOK_MIN_X, x1: HOOK_MAX_X, bed: BED - 6 };
-  const z = perch.z;
-  return { x0: perch.sx + 12, x1: Math.min(perch.sx + 196, z.x0 + z.w - 6), bed: roamBed(hook.x) - 6 };
+  const g = sealGeo(), z = perch.z, sx = g.left + g.w;
+  return { x0: Math.max(sx + 12, perch.x1 + 4), x1: Math.min(sx + 196, z.x0 + z.w - 6), bed: roamBed(hook.x) - 6 };
 }
 function rodGeo(g, spin) {
   const L = 38 + g.w * .28, a = -.82;
@@ -939,9 +993,11 @@ function rodGeo(g, spin) {
 
 function spawnFish(initial) {
   const pool = state === 'roam' && curZone ? curZone.fish : FISH;
-  let tot = 0; for (const f of pool) tot += f.w;
+  // good bait draws the rare ones; a hunter that also roams as a hostile only shows up for the hook once she has the bait it wants; capped species stay singular
+  const fw = f => (f.hostile && bait < (f.needBait || 0)) || (f.max && fishes.filter(x => x.T === f).length >= f.max) ? 0 : f.w * (f.rare ? BAITS[bait].rare : 1);
+  let tot = 0; for (const f of pool) tot += fw(f);
   let r = Math.random() * tot, T = pool[0];
-  for (const f of pool) { if ((r -= f.w) < 0) { T = f; break; } }
+  for (const f of pool) { if ((r -= fw(f)) < 0) { T = f; break; } }
   let y = SURF + rand(T.dmin, T.dmax), dir = Math.random() < .5 ? 1 : -1, x;
   if (state === 'roam' && curZone) { // somewhere in this biome, out of her sight
     const z = curZone;
@@ -964,6 +1020,8 @@ function spawnJelly() { jellies.push({ x: rand(150, 300), y: SURF + rand(60, 340
 function reset() {
   iceBroken = false; smashing = false; swim = null; shark = null; minions = []; iceChunks = []; shake = 0; bossT = 0; wonT = 0; bg = bgIntact;
   camX = 0; travelOpen = false; nerpas = []; hostiles = []; curZone = null; roamT = 0; perch = null;
+  rod = false; gal = 0; wasAtDoor = false; bait = 0; shopOpen = false;
+  air = 1; grabbed = null; escape = 0; deathCause = '';
   seal.size = seal.disp = START_SIZE; seal.chew = 0; seal.jump = 0;
   hooked = null; tension = 0; flights = []; parts = []; pops = []; bubbles = [];
   caught = 0; biggest = null; peak = START_SIZE; elapsed = 0; megaShown = false; hintDone = false;
@@ -1043,8 +1101,8 @@ function eat(T) {
   }
 }
 
-function die() {
-  state = 'dead'; deadT = 0; seal.size = MIN_SIZE;
+function die(cause) {
+  state = 'dead'; deadT = 0; seal.size = MIN_SIZE; deathCause = cause || 'IT STARVED...'; grabbed = null;
   if (hooked) { hooked.state = 'flee'; hooked.fleeT = 2; hooked = null; }
   tension = 0;
   const g = sealGeo();
@@ -1129,6 +1187,8 @@ function travelTo(i) {
   if (!(best.visited || []).includes(z.id)) return;
   travelOpen = false;
   if (z === curZone) return;
+  if (perch) { stowRod(); perch = null; }
+  grabbed = null; escape = 0;
   swim.x = z.x0 + z.w / 2; swim.y = SURF + 30; swim.vx = swim.vy = 0;
   camX = clamp(swim.x - W / 2, 0, ROAM_W - W); camY = 0;
   burst(swim.x, swim.y, 16, ['#ffffff', '#7ad8ff'], 60); SFX.splash();
@@ -1138,6 +1198,7 @@ function roamConfine(g) {
   const bed = roamBed(swim.x);
   swim.x = clamp(swim.x, g.w / 2 + 2, ROAM_W - g.w / 2 - 2);
   if (curZone.id === 'arctic') { const wall = iceUnderX(swim.y); if (wall > 0 && swim.x - g.w / 2 < wall) { swim.x = wall + g.w / 2; swim.vx = Math.max(0, swim.vx); } }
+  for (const L of curZone.lands) if (L.depth && swim.x > L.x0 - 4 && swim.x < (L.dock || L.x1) + 4 && swim.y - g.h / 2 < L.depth) { swim.y = L.depth + g.h / 2; swim.vy = Math.max(0, swim.vy); } // she swims under solid land
   if (swim.y + g.h / 2 > bed - 2) { swim.y = bed - 2 - g.h / 2; swim.vy = Math.min(0, swim.vy); }
 }
 const nearNerpa = () => nerpas.some(n => Math.hypot(n.x - swim.x, n.y - swim.y) < 70);
@@ -1168,57 +1229,170 @@ function updateRoam(dt) {
     n.dir = n.vx < 0 ? -1 : 1;
     n.y = clamp(n.y, SURF + 12, SURF + 140);
   }
-  camX = lerp(camX, clamp((perch ? hook.x : swim.x) - W / 2, 0, ROAM_W - W), 1 - Math.exp(-dt * 4));
-  for (const z of ZONES) if (z.perch && z.perch.floats) z.perch.bob = Math.round(Math.sin(t * 1.4));
+  camX = lerp(camX, clamp((perch && rod ? hook.x : swim.x) - W / 2, 0, ROAM_W - W), 1 - Math.exp(-dt * 4));
+  for (const L of LANDS) if (L.floats) L.bob = Math.round(Math.sin(t * 1.4));
   updateHostiles(dt);
 }
-// ---- perches: hauling out to fish ----
-const perchAt = () => { // the perch she is close enough to climb onto
-  const p = curZone && curZone.perch;
-  return p && swim && swim.y < SURF + 26 && swim.x > p.x0 - 14 && swim.x < p.x1 + 30 ? p : null;
+// ---- land: hauling out, galumphing about, casting from the shore, and the bait shack ----
+const perchAt = () => { // the land she is close enough to climb onto
+  if (!curZone || !swim) return null;
+  return curZone.lands.find(L => swim.y < Math.max(SURF + 14, L.depth) + 28 && swim.x > L.x0 - 30 && swim.x < L.x1 + 30) || null;
 };
 function haulOut(p) {
-  perch = p; swim.x = p.sx - 10; swim.y = SURF + 8; swim.vx = swim.vy = 0; swim.dir = 1;
+  perch = p; rod = false; gal = 0; wasAtDoor = false;
+  const w = sealDims(seal.disp).w;
+  swim.x = clamp(swim.x, p.x0 + w / 2 + 2, p.x1 - w / 2 - 2); swim.y = p.top - 6; swim.vx = swim.vy = 0;
   hooked = null; tension = 0; hook.stun = 0; bobDip = 0;
-  const r = rodGeo(sealGeo());
-  hook.x = r.tx + 14; hook.y = r.ty + 20; hook.vx = hook.vy = 0; wasUnder = false;
-  splash(p.sx - 6, SURF, 10); SFX.splash();
-  pops.push(pop(p.sx - 10, p.top - 20, 'FISHING FROM THE ' + p.name, '#ffffff'));
+  splash(swim.x, SURF, 10); SFX.splash();
+  pops.push(pop(swim.x, p.top - 20, 'ON THE ' + p.name, '#ffffff'));
 }
-function diveIn() {
-  const p = perch; if (!p) return;
+function castRod() {
+  rod = true; swim.dir = 1; swim.vx = 0; gal = 0;
+  const r = rodGeo(sealGeo());
+  hook.x = r.tx + 14; hook.y = r.ty + 20; hook.vx = hook.vy = 0; hook.stun = 0; wasUnder = false; bobDip = 0; tension = 0;
+  tone(500, 900, .1, 'square', .04);
+}
+function stowRod() {
   if (hooked) { hooked.state = 'flee'; hooked.fleeT = 2; hooked = null; tension = 0; }
-  perch = null;
-  swim.x = p.x1 + 8; swim.y = SURF + 10; swim.vx = 30; swim.vy = 40; swim.dir = 1;
+  rod = false;
+}
+function diveIn(side = 1) {
+  const p = perch; if (!p) return;
+  stowRod(); perch = null; wasAtDoor = false; gal = 0;
+  swim.x = side > 0 ? p.x1 + 8 : p.x0 - 8; swim.y = SURF + 10; swim.vx = 30 * side; swim.vy = 40; swim.dir = side;
   roamConfine(sealGeo());
   splash(swim.x, SURF, 12); SFX.splash();
 }
-function drawPerches(CX) {
-  for (const z of ZONES) {
-    const p = z.perch;
-    if (!p || p.snow || p.x1 < CX - 10 || p.x0 > CX + W + 10) continue; // the floe is already painted into the arctic canvas
-    const top = p.top + p.bob - CY, w = p.x1 - p.x0;
-    if (z.id === 'swamp') { // a weathered plank dock on stakes
-      ctx.fillStyle = '#3a2a18'; for (let x = p.x0 + 4; x < p.x1; x += 16) ctx.fillRect(x, top, 3, SURF + 16 - p.top);
-      ctx.fillStyle = '#8a6a3a'; ctx.fillRect(p.x0, top, w, 3);
-      ctx.fillStyle = '#a8865a'; ctx.fillRect(p.x0, top, w, 1);
-      ctx.fillStyle = '#5a4428'; for (let x = p.x0 + 7; x < p.x1; x += 8) ctx.fillRect(x, top, 1, 3);
-      ctx.fillStyle = '#5a4428'; ctx.fillRect(p.x1 - 3, top - 8, 2, 8); // mooring post
-      ctx.fillStyle = '#c8b080'; ctx.fillRect(p.x1 - 4, top - 6, 4, 1);
+// galumphing along the land. A stride takes .55 s and, once begun, is finished; she only gains ground in its second half,
+// stretched out and sliding, which gives the lurching rhythm. Off either end she slips into the water; the shack door opens the shop
+function updateWalk(dt, ix, iy) {
+  const p = perch, g = sealGeo(), sp = 56, k = 1 - Math.exp(-dt * 8), TAU = 2 * Math.PI, moving = Math.abs(ix) > .2;
+  if (moving) swim.dir = Math.sign(ix);
+  if (moving || gal > 0) {
+    const g0 = gal; gal += dt * TAU / .55;
+    if (gal >= TAU) gal = moving ? gal - TAU : 0;
+    const lunge = Math.max(0, -Math.sin(gal));
+    swim.vx = lerp(swim.vx, swim.dir * sp * (.15 + 1.2 * lunge) * (moving ? Math.abs(ix) : .6), k);
+    if (g0 < Math.PI && (gal >= Math.PI || gal < g0)) { // the hop lands: a puff of snow or mud off her belly
+      const cols = p.snow ? ['#ffffff', '#d8eef7'] : p.kind === 'sandbar' ? ['#efe0a8', '#c0ac78'] : p.kind === 'raft' || p.kind === 'bank' && swim.x >= p.dock ? ['#8a6a3a', '#5a4428'] : ['#5a4a2c', '#3a2e1c'];
+      for (let i = 0; i < 4; i++) parts.push({ x: g.left + rand(2, g.w - 2), y: p.top + p.bob, vx: -swim.dir * rand(5, 25), vy: rand(-30, -10), g: 160, life: rand(.2, .45), col: cols[i % 2] });
+      tone(150, 70, .07, 'triangle', .035);
+    }
+  } else swim.vx = lerp(swim.vx, 0, k);
+  swim.x += swim.vx * dt;
+  if (swim.x - g.w / 2 < p.x0 - 6) { if (p.wallL) { swim.x = p.x0 + g.w / 2 - 6; swim.vx = 0; } else { diveIn(-1); return; } }
+  if (swim.x + g.w / 2 > p.x1 + 6) { diveIn(1); return; }
+  const wantDive = iy > .5 && (!pointer.down || pointer.y + camY > SURF + 12);
+  if (wantDive) { diveIn(p.wallL || swim.x > (p.x0 + p.x1) / 2 ? 1 : -1); return; }
+  const atDoor = !!p.shop && Math.abs(swim.x - p.shop.door) < 7;
+  if (atDoor && !wasAtDoor) openShop();
+  wasAtDoor = atDoor;
+}
+function openShop() {
+  shopOpen = true; shopSel = Math.min(BAITS.length - 1, bait + 1); swim.vx = 0;
+  tone(600, 900, .1, 'triangle', .05); tone(900, 1200, .1, 'triangle', .05, .1);
+}
+function buyBait(i) {
+  const B = BAITS[i], g = sealGeo(), cx = g.left + g.w / 2;
+  shopOpen = false;
+  if (i === bait) return;
+  const left = kg(seal.size) - B.cost;
+  if (left < kg(MIN_SIZE) + 8) { pops.push(pop(cx, g.top - 10, 'TOO SKINNY TO PAY ' + B.cost + ' KG', '#ff6a5a')); tone(300, 200, .15, 'square', .05); return; }
+  seal.size = START_SIZE * Math.sqrt(left / 32); // blubber is the currency
+  bait = i;
+  pops.push(pop(cx, g.top - 10, B.name + '!', '#ffd84a'));
+  if (B.cost) pops.push(pop(cx, g.top - 2, '-' + B.cost + ' KG', '#ff6a5a', .2));
+  burst(cx, g.top + g.h / 2, 12, ['#ffd84a', '#ffffff']); tone(700, 1100, .12, 'square', .05);
+}
+function drawLands(CX) {
+  for (const L of LANDS) {
+    if (L.kind === 'floe' || L.x1 < CX - 10 || L.x0 > CX + W + 10) continue; // the floe is already painted into the arctic canvas
+    const top = L.top + L.bob - CY, w = L.x1 - L.x0, surf = SURF - CY;
+    if (L.kind === 'island') { // a grounded slab of ice under a cap of snow
+      ctx.fillStyle = '#9fd0e4'; ctx.fillRect(L.x0 + 3, surf + 2, w - 6, L.depth - SURF - 2);
+      ctx.fillStyle = '#7fb8d2'; ctx.fillRect(L.x0 + 3, L.depth - CY - 2, w - 6, 2);
+      ctx.fillStyle = '#d8eef7'; ctx.fillRect(L.x0, top + 2, w, SURF + 2 - L.top - 2);
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(L.x0 + 2, top, w - 4, 2); ctx.fillRect(L.x0, top + 1, w, 1);
+      ctx.fillStyle = '#e8f8ff'; ctx.fillRect(L.x0, surf + 1, w, 1);
+      for (let i = 0; i < 5; i++) { const x = L.x0 + 12 + Math.round(hash(i, 71) * (w - 24)), dw = 4 + Math.round(hash(i, 72) * 6); ctx.fillStyle = '#ffffff'; ctx.fillRect(x, top - 1, dw, 1); } // drifts
+      drawShack(L.shop, top);
+    } else if (L.kind === 'bank' || L.kind === 'hummock') { // a muddy swamp bank with grass on top, sloping away under water
+      const x1 = L.kind === 'bank' ? L.dock : L.x1;
+      for (let y = SURF + 2; y < L.depth; y++) { const inset = Math.round((y - SURF) * .5); ctx.fillStyle = '#3a2e1c'; ctx.fillRect(L.x0 + inset, y - CY, x1 - L.x0 - inset * (L.kind === 'bank' ? 1 : 2), 1); }
+      ctx.fillStyle = '#5a4a2c'; ctx.fillRect(L.x0, top + 2, x1 - L.x0, SURF + 2 - L.top - 2);
+      ctx.fillStyle = '#4a3a20'; for (let x = L.x0 + 3; x < x1; x += 7) ctx.fillRect(x, top + 3 + (x % 3), 2, 1);
+      ctx.fillStyle = '#5f8a3a'; ctx.fillRect(L.x0, top, x1 - L.x0, 2);
+      ctx.fillStyle = '#7fa84a'; ctx.fillRect(L.x0 + 1, top, x1 - L.x0 - 2, 1);
+      for (let i = 0; i < (x1 - L.x0) / 9; i++) { // tufts and a few reeds
+        const x = L.x0 + 3 + Math.round(hash(i, 73 + L.x0) * (x1 - L.x0 - 6)), tall = hash(i, 74 + L.x0) < .3;
+        ctx.fillStyle = tall ? '#3f6b2a' : '#7fa84a'; ctx.fillRect(x, top - (tall ? 7 : 2), 1, tall ? 7 : 2);
+        if (tall) { ctx.fillStyle = '#6a4a2a'; ctx.fillRect(x, top - 7, 1, 2); }
+      }
+      if (L.kind === 'hummock') { // a dead tree leaning over the water
+        const x = L.x0 + 20;
+        ctx.fillStyle = '#3a3426'; ctx.fillRect(x, top - 20, 3, 20); ctx.fillStyle = '#4e4634'; ctx.fillRect(x, top - 20, 1, 20);
+        ctx.fillStyle = '#3a3426';
+        bresenham(x + 2, top - 13, x + 10, top - 19, (px, py) => ctx.fillRect(px, py, 2, 1));
+        bresenham(x, top - 9, x - 6, top - 15, (px, py) => ctx.fillRect(px, py, 2, 1));
+        bresenham(x + 1, top - 19, x + 4, top - 25, (px, py) => ctx.fillRect(px, py, 1, 1));
+      } else { // the weathered plank dock on stakes, out from the bank
+        const d0 = L.dock;
+        ctx.fillStyle = '#3a2a18'; for (let x = d0 + 4; x < L.x1; x += 16) ctx.fillRect(x, top, 3, SURF + 16 - L.top);
+        ctx.fillStyle = '#8a6a3a'; ctx.fillRect(d0, top, L.x1 - d0, 3);
+        ctx.fillStyle = '#a8865a'; ctx.fillRect(d0, top, L.x1 - d0, 1);
+        ctx.fillStyle = '#5a4428'; for (let x = d0 + 7; x < L.x1; x += 8) ctx.fillRect(x, top, 1, 3);
+        ctx.fillStyle = '#5a4428'; ctx.fillRect(L.x1 - 3, top - 8, 2, 8); // mooring post
+        ctx.fillStyle = '#c8b080'; ctx.fillRect(L.x1 - 4, top - 6, 4, 1);
+      }
+    } else if (L.kind === 'sandbar') { // a low hump of pale sand with a tuft of dune grass and a gull
+      for (let y = SURF + 2; y < L.depth; y++) { const inset = Math.round((y - SURF) * 1.2); ctx.fillStyle = '#9a8c62'; ctx.fillRect(L.x0 + inset, y - CY, w - inset * 2, 1); }
+      ctx.fillStyle = '#d8c48e'; ctx.fillRect(L.x0, top + 1, w, SURF + 2 - L.top - 1);
+      ctx.fillStyle = '#efe0a8'; ctx.fillRect(L.x0 + 3, top, w - 6, 2); ctx.fillRect(L.x0 + 1, top + 1, w - 2, 1);
+      ctx.fillStyle = '#c0ac78'; for (let x = L.x0 + 5; x < L.x1 - 4; x += 9) ctx.fillRect(x, top + 2 + (x % 2), 2, 1);
+      ctx.fillStyle = '#7fa84a'; for (let i = 0; i < 5; i++) ctx.fillRect(L.x0 + 10 + i * 2, top - 3 - (i % 2) * 2, 1, 3 + (i % 2) * 2);
+      const gx = L.x1 - 14, gy = top - 4; // the gull
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(gx, gy, 5, 3); ctx.fillRect(gx + 4, gy - 2, 2, 3);
+      ctx.fillStyle = '#9fb0bc'; ctx.fillRect(gx, gy, 4, 1); ctx.fillStyle = '#f0a030'; ctx.fillRect(gx + 6, gy - 1, 1, 1); ctx.fillRect(gx + 1, gy + 3, 1, 1); ctx.fillRect(gx + 3, gy + 3, 1, 1);
+      ctx.fillStyle = '#111'; ctx.fillRect(gx + 5, gy - 2, 1, 1);
     } else { // a raft of lashed logs, adrift
-      ctx.fillStyle = '#6a4a2a'; ctx.fillRect(p.x0, top, w, 5);
-      ctx.fillStyle = '#8a6a3a'; ctx.fillRect(p.x0, top, w, 1);
-      ctx.fillStyle = '#4a3418'; for (let x = p.x0 + 3; x < p.x1; x += 6) ctx.fillRect(x, top + 2, 1, 3);
-      ctx.fillStyle = '#c8b080'; ctx.fillRect(p.x0 + 6, top, 1, 5); ctx.fillRect(p.x1 - 7, top, 1, 5);
-      ctx.fillStyle = '#5a4428'; ctx.fillRect(p.x1 - 5, top - 13, 1, 13); // a pole with a rag
-      ctx.fillStyle = '#c04040'; ctx.fillRect(p.x1 - 4, top - 13 + (Math.floor(t * 4) % 2), 4, 2);
+      ctx.fillStyle = '#6a4a2a'; ctx.fillRect(L.x0, top, w, 5);
+      ctx.fillStyle = '#8a6a3a'; ctx.fillRect(L.x0, top, w, 1);
+      ctx.fillStyle = '#4a3418'; for (let x = L.x0 + 3; x < L.x1; x += 6) ctx.fillRect(x, top + 2, 1, 3);
+      ctx.fillStyle = '#c8b080'; ctx.fillRect(L.x0 + 6, top, 1, 5); ctx.fillRect(L.x1 - 7, top, 1, 5);
+      ctx.fillStyle = '#5a4428'; ctx.fillRect(L.x1 - 5, top - 13, 1, 13); // a pole with a rag
+      ctx.fillStyle = '#c04040'; ctx.fillRect(L.x1 - 4, top - 13 + (Math.floor(t * 4) % 2), 4, 2);
     }
   }
+}
+// the walrus's bait shack: a plank hut with a snowy roof, a lit window, a BAIT board over the door, and the walrus dozing beside it
+function drawShack(sh, top) {
+  const x0 = sh.x0, x1 = sh.x1, d = sh.door;
+  ctx.fillStyle = '#8a6a3a'; ctx.fillRect(x0 + 2, top - 16, x1 - x0 - 4, 16);
+  ctx.fillStyle = '#6a4a2a'; for (let y = top - 13; y < top; y += 4) ctx.fillRect(x0 + 2, y, x1 - x0 - 4, 1);
+  ctx.fillStyle = '#5a4428'; ctx.fillRect(x0, top - 22, x1 - x0, 6); ctx.fillRect(x0 + 2, top - 24, x1 - x0 - 4, 2);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(x0, top - 23, x1 - x0, 2); ctx.fillRect(x0 + 2, top - 25, x1 - x0 - 4, 2);
+  ctx.fillStyle = '#5a4428'; ctx.fillRect(x1 - 9, top - 30, 3, 6); // chimney
+  ctx.fillStyle = '#cfd8dc'; ctx.fillRect(x1 - 8 + Math.round(Math.sin(t * 2)), top - 33, 1, 1); ctx.fillRect(x1 - 7 + Math.round(Math.sin(t * 2 + 1)), top - 36, 2, 1);
+  ctx.fillStyle = '#5a4428'; ctx.fillRect(x0 + 5, top - 14, 7, 6); // window
+  ctx.fillStyle = Math.floor(t * 3) % 7 ? '#ffe070' : '#ffd040'; ctx.fillRect(x0 + 6, top - 13, 5, 4);
+  ctx.fillStyle = '#3a2a18'; ctx.fillRect(d - 3, top - 11, 7, 11); // door
+  ctx.fillStyle = '#ffd060'; ctx.fillRect(d + 2, top - 6, 1, 1);
+  ctx.fillStyle = '#5b3418'; ctx.fillRect(d - 11, top - 21, 22, 9); ctx.fillStyle = '#f4e2bb'; ctx.fillRect(d - 10, top - 20, 20, 7); // the sign
+  txt('BAIT', d - 7, top - 19, INK, 1, null);
+  const wx = x1 + 6; // the walrus, facing west toward the door
+  ctx.fillStyle = '#5a4038'; ctx.fillRect(wx + 5, top - 2, 4, 2); ctx.fillRect(wx + 18, top - 3, 5, 3);
+  ctx.fillStyle = '#7a5a48'; ctx.fillRect(wx + 3, top - 7, 18, 7); ctx.fillRect(wx + 5, top - 8, 14, 1);
+  ctx.fillStyle = '#8a6a58'; ctx.fillRect(wx + 5, top - 6, 12, 3);
+  ctx.fillStyle = '#7a5a48'; ctx.fillRect(wx, top - 11, 8, 7); ctx.fillRect(wx + 1, top - 12, 6, 1); // head
+  ctx.fillStyle = '#9a7a68'; ctx.fillRect(wx, top - 7, 6, 3); // muzzle
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(wx + 1, top - 4, 1, 4); ctx.fillRect(wx + 4, top - 4, 1, 4); // tusks
+  ctx.fillStyle = '#e8d8c8'; ctx.fillRect(wx + 2, top - 6, 1, 1); ctx.fillRect(wx + 3, top - 6, 1, 1);
+  ctx.fillStyle = Math.floor(t * .7) % 5 ? '#111' : '#7a5a48'; ctx.fillRect(wx + 2, top - 10, 1, 1); // a slow blink
 }
 function spawnHostiles() {
   hostiles = [];
   for (const z of ZONES) for (const T of z.hostile) for (let i = 0; i < T.count; i++) {
-    const h = { T, zone: z, x: 0, y: 0, hx: 0, hy: 0, vx: 0, vy: 0, dir: 1, cd: 1, ph: rand(0, 6), alert: 0, dead: 0, wasChasing: false };
+    const h = { T, zone: z, x: 0, y: 0, hx: 0, hy: 0, vx: 0, vy: 0, dir: 1, cd: 1, ph: rand(0, 6), alert: 0, dead: 0, wasChasing: false, calm: 0, squeeze: 0 };
     placeHostile(h); hostiles.push(h);
   }
 }
@@ -1233,11 +1407,22 @@ function updateHostiles(dt) {
   for (const h of hostiles) {
     if (h.dead > 0) { if ((h.dead -= dt) <= 0) placeHostile(h); continue; }
     const T = h.T;
-    h.cd -= dt; h.alert = Math.max(0, h.alert - dt);
-    const d = Math.hypot(sx - h.x, sy - h.y) || 1, chasing = state === 'roam' && !perch && d < T.aggro;
+    h.cd -= dt; h.alert = Math.max(0, h.alert - dt); h.calm = Math.max(0, h.calm - dt);
+    if (grabbed === h) { // she is in its arms: it sinks with her, squeezing, while she struggles to break its grip
+      h.vx = lerp(h.vx, 0, k); h.vy = lerp(h.vy, 38, k);
+      h.x += h.vx * dt; h.y += h.vy * dt;
+      h.y = Math.min(h.y, roamBed(h.x) - 12);
+      swim.x = h.x + h.dir * T.len * .3; swim.y = h.y + 2; swim.vx = swim.vy = 0;
+      if ((h.squeeze -= dt) <= 0) { h.squeeze = 2; seal.size -= 1; burst(g.mx, g.my, 4, ['#ff6a5a', '#ffffff']); }
+      escape = Math.max(0, escape - dt * .3);
+      if (escape >= 1) breakFree(h);
+      if (state !== 'roam') grabbed = null;
+      continue;
+    }
+    const d = Math.hypot(sx - h.x, sy - h.y) || 1, chasing = state === 'roam' && !perch && h.calm <= 0 && d < T.aggro;
     if (chasing && !h.wasChasing) {
       h.alert = .8; tone(260, 160, .15, 'square', .04);
-      if (!T.intro) { T.intro = true; pops.push(pop(h.x, h.y - 18, T.name + '! ' + (T.minEat ? 'BITE IT HEAD-ON ONCE YOU WEIGH ' + kg(T.minEat) + ' KG' : 'BITE IT HEAD-ON'), '#ff6a5a')); }
+      if (!T.intro) { T.intro = true; pops.push(pop(h.x, h.y - 18, T.name + '! ' + (T.warn || (T.minEat ? 'BITE IT HEAD-ON ONCE YOU WEIGH ' + kg(T.minEat) + ' KG' : 'BITE IT HEAD-ON')), '#ff6a5a')); }
     }
     h.wasChasing = chasing;
     if (chasing) { h.vx = lerp(h.vx, (sx - h.x) / d * T.speed, k); h.vy = lerp(h.vy, (sy - h.y) / d * T.speed, k); }
@@ -1255,14 +1440,35 @@ function updateHostiles(dt) {
       h.dead = 25; swim.biteCd = .5; eat(T); burst(h.x, h.y, 12, [T.body, T.back, '#ffffff']);
       continue;
     }
-    if (h.cd <= 0 && Math.abs(h.x - sx) < T.len * .45 + g.w * .35 && Math.abs(h.y - sy) < hh + g.h * .35) { // it bites her
+    if (h.cd <= 0 && Math.abs(h.x - sx) < T.len * .45 + g.w * .35 && Math.abs(h.y - sy) < hh + g.h * .35) { // it bites her (or, the squid, wraps her up)
       h.cd = T.cd; swim.nip = .3;
+      if (T.grab) {
+        grabbed = h; escape = .2; lastSide = ''; h.squeeze = 2; h.vx = h.vy = 0;
+        pops.push(pop(sx, g.top - 10, 'GRABBED! MASH A AND D!', '#ff6a5a'));
+        burst(g.mx, g.my, 10, ['#b04868', '#ffffff']); SFX.hit(); SFX.roar(); shake = .4;
+        continue;
+      }
       const before = kg(seal.size); seal.size -= T.bite;
       swim.vx += (sx - h.x) * 3; swim.vy += (sy - h.y) * 3; h.vx = (h.x - sx) * 2; h.vy = (h.y - sy) * 2;
       pops.push(pop(sx, g.top - 8, '-' + Math.max(1, before - kg(seal.size)) + ' KG', '#ff6a5a'));
       burst(g.mx, g.my, 6, ['#ff6a5a', '#ffffff']); SFX.hit(); shake = .2;
     }
   }
+}
+// a mashed key while the squid has her; alternating left and right works far better than hammering one key
+function struggle(side) {
+  if (!grabbed) return;
+  escape = Math.min(1.01, escape + (side !== lastSide ? .13 : .04)); lastSide = side;
+  const g = sealGeo();
+  for (let i = 0; i < 2; i++) bubbles.push({ x: g.mx + rand(-4, 4), y: g.my, r: 1, ph: rand(0, 6) });
+  tone(300 + escape * 400, 400 + escape * 400, .04, 'square', .03);
+}
+function breakFree(h) {
+  grabbed = null; escape = 0; h.cd = 8; h.calm = 7; h.vy = 70; h.vx = -h.dir * 40; // it sinks off, sulking
+  swim.vy = -150; swim.vx = 0; swim.biteCd = 1; swim.nip = 0;
+  pops.push(pop(swim.x, swim.y - 20, 'BROKE FREE!', '#ffd84a'));
+  burst(swim.x, swim.y, 16, ['#ffffff', '#7ad8ff'], 70); splash(swim.x, swim.y, 0);
+  tone(400, 900, .2, 'square', .06); tone(900, 1400, .2, 'square', .05, .15);
 }
 function drawHostiles() {
   for (const h of hostiles) {
@@ -1302,7 +1508,7 @@ function updateSwim(dt, ix, iy) {
   // she eats any fish she swims into
   if (state === 'boss' || state === 'roam') for (let i = fishes.length - 1; i >= 0; i--) {
     const f = fishes[i];
-    if (f.state !== 'hooked' && Math.hypot(f.x - g.mx, f.y - g.my) < 7 + f.T.len * .3) {
+    if (f.state !== 'hooked' && !f.T.needBait && Math.hypot(f.x - g.mx, f.y - g.my) < 7 + f.T.len * .3) {
       fishes.splice(i, 1);
       if (state === 'roam' && nearNerpa()) giftFish(f.T); else eat(f.T); // next to a nerpa the fish is shared, not eaten
       break;
@@ -1402,21 +1608,24 @@ function action() {
   audio();
   if (paused) { paused = false; return; }
   if (state === 'won' && wonT > 2) { startRoam(false); return; }
-  if (state === 'roam') { if (perch) diveIn(); else { const p = perchAt(); if (p) haulOut(p); } return; }
+  if (state === 'roam') { if (perch) { if (rod) stowRod(); else castRod(); } else { const p = perchAt(); if (p) haulOut(p); } return; }
   if (state === 'title' || (state === 'dead' && deadT > 1.5)) { reset(); state = 'play'; }
 }
 addEventListener('keydown', e => {
   const k = KEYMAP[e.code];
   if (k) { keys[k] = true; e.preventDefault(); audio(); }
+  if (grabbed && !e.repeat && (k === 'left' || k === 'right')) struggle(k);
   if (journalOpen && (k === 'left' || k === 'right')) journalPage = (journalPage + (k === 'left' ? BIOMES.length - 1 : 1)) % BIOMES.length;
   if (travelOpen && (k === 'up' || k === 'down')) travelSel = (travelSel + (k === 'up' ? ZONES.length - 1 : 1)) % ZONES.length;
-  if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); if (journalOpen) journalOpen = false; else if (travelOpen) travelTo(travelSel); else action(); }
-  if (e.code === 'Escape' && travelOpen) travelOpen = false;
+  if (shopOpen && (k === 'up' || k === 'down')) shopSel = (shopSel + (k === 'up' ? BAITS.length - 1 : 1)) % BAITS.length;
+  if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); if (journalOpen) journalOpen = false; else if (shopOpen) buyBait(shopSel); else if (travelOpen) travelTo(travelSel); else action(); }
+  if (e.code === 'Escape' && shopOpen) shopOpen = false;
+  else if (e.code === 'Escape' && travelOpen) travelOpen = false;
   else if ((e.code === 'KeyP' || e.code === 'Escape') && (state === 'play' || state === 'boss' || state === 'roam')) paused = !paused;
   if (e.code === 'KeyM') { muted = !muted; syncMusic(); }
   if (e.code === 'KeyJ') { journalOpen = !journalOpen; audio(); }
   if (e.code === 'KeyB') { audio(); startSmash(); }
-  if (e.code === 'KeyT' && state === 'roam') { travelOpen = !travelOpen; travelSel = ZONES.indexOf(curZone); }
+  if (e.code === 'KeyT' && state === 'roam' && !shopOpen) { travelOpen = !travelOpen; travelSel = ZONES.indexOf(curZone); }
   if (e.code === 'KeyR' && state === 'title' && best.sharks) { audio(); startRoam(true); }
   if (e.code === 'KeyK' && best.skinUnlocked) { best.skin = best.skin === 'baikal' ? '' : 'baikal'; saveBest(); }
 });
@@ -1434,9 +1643,18 @@ cv.addEventListener('pointerdown', e => {
   if (journalOpen) { if (pointer.y > 158) journalOpen = false; else journalPage = (journalPage + (pointer.x < W / 2 ? BIOMES.length - 1 : 1)) % BIOMES.length; return; }
   if (state === 'roam' && !travelOpen && pointer.x >= 50 && pointer.x < 68 && pointer.y < 17) { travelOpen = true; travelSel = ZONES.indexOf(curZone); return; } // travel button
   if (travelOpen) { const i = Math.floor((pointer.y - (TRAVEL_Y + 19)) / 14); if (pointer.x > 90 && pointer.x < 230 && i >= 0 && i < ZONES.length) travelTo(i); else travelOpen = false; return; }
-  if (state === 'roam' && !paused) { // tap the perch (or her, sitting on it) to haul out or dive back in
-    const wx = pointer.x + camX, wy = pointer.y + camY, p = perch || perchAt();
-    if (p && wx >= p.x0 - 4 && wx <= p.x1 + 4 && wy >= p.top - 26 && wy <= p.top + 8) { audio(); if (perch) diveIn(); else haulOut(p); return; }
+  if (shopOpen) { const i = Math.floor((pointer.y - (SHOP_Y + 27)) / 16); if (pointer.x > 60 && pointer.x < 260 && i >= 0 && i < BAITS.length) buyBait(i); else shopOpen = false; return; }
+  if (grabbed && state === 'roam' && !paused) { audio(); struggle(pointer.x < W / 2 ? 'left' : 'right'); return; } // tap left and right of the screen in turn
+  if (state === 'roam' && !paused) {
+    const wx = pointer.x + camX, wy = pointer.y + camY;
+    if (perch) { // on land: tap the shack to shop, tap her to cast or stow the rod; holding elsewhere walks her there
+      const sh = perch.shop, g = sealGeo();
+      if (sh && wx >= sh.x0 - 2 && wx <= sh.x1 + 2 && wy >= perch.top - 30 && wy <= perch.top + 2) { audio(); openShop(); return; }
+      if (wx >= g.left - 4 && wx <= g.left + g.w + 4 && wy >= g.top - 6 && wy <= g.top + g.h + 4) { audio(); if (rod) stowRod(); else castRod(); return; }
+    } else { // tap the land to haul out onto it
+      const p = perchAt();
+      if (p && wx >= p.x0 - 4 && wx <= p.x1 + 4 && wy >= p.top - 26 && wy <= p.top + 8) { audio(); haulOut(p); return; }
+    }
   }
   if (bossReady()) {
     const g = sealGeo();
@@ -1454,8 +1672,9 @@ function update(dt) {
   t += dt;
   const playing = state === 'play' || state === 'boss' || state === 'roam';
   let ix = (keys.right ? 1 : 0) - (keys.left ? 1 : 0), iy = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
-  if (pointer.down) {
-    const o = swimming() && swim ? swim : hook;
+  if (grabbed) { ix = 0; iy = 0; }
+  else if (pointer.down) {
+    const o = (swimming() || (perch && !rod)) && swim ? swim : hook;
     const dx = pointer.x + (state === 'roam' ? camX : 0) - o.x, dy = pointer.y + camY - o.y;
     ix = Math.abs(dx) > 2 ? clamp(dx / 14, -1, 1) : 0;
     iy = Math.abs(dy) > 2 ? clamp(dy / 14, -1, 1) : 0;
@@ -1467,6 +1686,11 @@ function update(dt) {
     elapsed += dt;
     seal.size -= (0.12 + seal.size * 0.0035) * (1 + elapsed / 300) * dt;
     if (seal.size <= MIN_SIZE) die();
+  }
+  if (state === 'roam' && swim) { // breath: it drains with her head under, faster in the squid's grip, and comes back fast at the surface or on land
+    if (swimming() && swim.y > SURF + 6) { air -= dt / AIR_T * (grabbed ? 2.5 : 1); if (air <= 0) { air = 0; die('IT DROWNED...'); } }
+    else air = Math.min(1, air + dt / 2.5);
+    if (air < .25 && air > 0 && Math.floor(t * 2) !== Math.floor((t - dt) * 2)) tone(180, 150, .08, 'triangle', .05 * (1 - air / .25));
   }
   if (state === 'dead') { deadT += dt; ghost.y -= 9 * dt; }
   if (state === 'won') wonT += dt;
@@ -1488,6 +1712,7 @@ function update(dt) {
   // ---- hook / rod (or, once the ice is smashed, the seal swimming) ----
   let nowUnder = false;
   if (swimming() || (curZone && state === 'dead')) updateSwim(dt, ix, iy);
+  else if (perch && !rod) updateWalk(dt, ix, iy);
   else {
   const r = rodGeo(sealGeo());
   if (hook.stun > 0) { hook.stun -= dt; ix = 0; iy = 0; }
@@ -1541,7 +1766,7 @@ function update(dt) {
 
   // ---- fish ----
   const hookSpeed = Math.hypot(hook.vx, hook.vy);
-  const canBite = (state === 'play' || (state === 'roam' && perch)) && !hooked && nowUnder && hook.stun <= 0;
+  const canBite = (state === 'play' || (state === 'roam' && perch && rod)) && !hooked && nowUnder && hook.stun <= 0, B = BAITS[bait];
   for (const f of fishes) {
     const T = f.T;
     if (f.state === 'hooked') continue;
@@ -1555,9 +1780,13 @@ function update(dt) {
         if (Math.random() < .35) f.dir *= -1;
         f.baseY = clamp(f.baseY + rand(-25, 25), SURF + T.dmin, SURF + T.dmax);
       }
-      const lureR = 46 + T.len * .6; // big fish spot the bait from further away
-      if (canBite && d < lureR) {
-        if (hookSpeed < 18) f.interest += dt * (.9 / (1 + T.len / 40)) * (1 - d / (lureR + 14)) * 1.6;
+      const lureR = (46 + T.len * .6) * B.range; // big fish spot the bait from further away, and better bait from further still
+      f.sniffT = Math.max(0, (f.sniffT || 0) - dt);
+      if (canBite && T.needBait && bait < T.needBait) { // the giants turn their nose up at anything but the glow lure
+        if (d < lureR * .6 && f.sniffT <= 0) { f.sniffT = 8; pops.push(pop(mx, f.y - T.len * T.ratio * .5 - 8, 'NOT INTERESTED IN ' + B.name, '#cfe6ff')); }
+      } else if (canBite && d < lureR) {
+        // the big ones are slow to commit to plain worms; the shop's baits win them over faster, scaled by how big the fish is
+        if (hookSpeed < 18) f.interest += dt * (.9 / (1 + T.len / 40)) * (1 - d / (lureR + 14)) * 1.6 * (1 + (B.big - 1) * clamp((T.len - 10) / 26, 0, 1));
         else if (hookSpeed > 50 && d < 34) scare(f);
         if (f.interest > 1) f.state = 'lured';
       } else f.interest = Math.max(0, f.interest - dt * .3);
@@ -1578,7 +1807,8 @@ function update(dt) {
     if (state === 'roam' || curZone) { // stay in the biome's water
       const z = zoneAt(f.x), bed = roamBed(f.x);
       if (f.x - T.len / 2 < z.x0 + 2) f.dir = 1; else if (f.x + T.len / 2 > z.x0 + z.w - 2) f.dir = -1;
-      f.y = clamp(f.y, SURF + 6, bed - 8); f.baseY = clamp(f.baseY, SURF + 6, bed - 8);
+      const L = landAt(f.x), floor = L && L.depth && f.x < (L.dock || L.x1) ? L.depth + 6 : SURF + 6; // they pass beneath solid land (the dock stands on stilts)
+      f.y = clamp(f.y, floor, bed - 8); f.baseY = clamp(f.baseY, floor, bed - 8);
     } else if (iceBroken) { // cavern walls
       if (f.x - T.len / 2 < AR.x0 + 3) f.dir = 1; else if (f.x + T.len / 2 > AR.x1 - 3) f.dir = -1;
       f.y = clamp(f.y, AR.y0 + 6, AR.y1 - 6); f.baseY = clamp(f.baseY, AR.y0 + 6, AR.y1 - 6);
@@ -1632,8 +1862,8 @@ function update(dt) {
   for (const f of flakes) { f.y += f.v * dt; f.x += Math.sin(t + f.ph) * .15; if (f.y > SURF) { f.y = -4; f.x = rand(0, W); } }
 
   // ---- camera follows the hook under water ----
-  const focus = state === 'dead' ? ghost.y - 70 : swimming() ? swim.y - 90 : hook.y - 95;
-  camY = lerp(camY, clamp(focus, 0, (curZone ? roamBed(perch ? hook.x : swim.x) + 40 : WORLD_H) - H), 1 - Math.exp(-dt * 4));
+  const focus = state === 'dead' ? ghost.y - 70 : swimming() ? swim.y - 90 : perch && !rod ? 0 : hook.y - 95;
+  camY = lerp(camY, clamp(focus, 0, (curZone ? roamBed(perch && rod ? hook.x : swim.x) + 40 : WORLD_H) - H), 1 - Math.exp(-dt * 4));
   shake = Math.max(0, shake - dt);
   if (shark) updateShark(dt);
   if (minions.length) updateMinions(dt);
@@ -1721,6 +1951,7 @@ function drawSwimmingSeal(g) {
   ctx.drawImage(c, -Math.round(g.w / 2) - s.pad, -Math.round(g.h / 2) - s.pad);
   ctx.restore();
   if ((state === 'boss' || state === 'roam') && seal.size < 18 && Math.floor(t * 3) % 2) ctxt('HUNGRY!', g.left + g.w / 2, g.top - 9 - CY, '#ff7a6a');
+  if (state === 'roam' && air < .25 && Math.floor(t * 4) % 2) ctxt('AIR!', g.left + g.w / 2, g.top - 9 - CY - (seal.size < 18 ? 8 : 0), '#7ad8ff');
 }
 function drawNerpas() {
   for (const n of nerpas) {
@@ -1777,18 +2008,19 @@ function drawSeal() {
   // shadow on the snow
   if (!perch || perch.snow) {
     ctx.fillStyle = '#b8d4e2';
-    const rx = g.w * .46 * Math.max(.4, 1 + sealJump().dy / 60);
-    for (let dy = -1; dy <= 1; dy++) { const hw = Math.round(rx * Math.sqrt(1 - (dy / 2) ** 2)); ctx.fillRect(Math.round(g.left + g.w * .45 - hw), ICE_TOP + 2 + dy - CY, hw * 2, 1); }
+    const rx = g.w * .46 * Math.max(.4, 1 + (sealJump().dy + galumph().dy) / 60), sy = perch ? perch.top + perch.bob : ICE_TOP + 2;
+    for (let dy = -1; dy <= 1; dy++) { const hw = Math.round(rx * Math.sqrt(1 - (dy / 2) ** 2)); ctx.fillRect(Math.round(g.left + g.w * .45 - hw), sy + dy - CY, hw * 2, 1); }
   }
   const eyes = dead ? 'dead' : seal.blink > 0 ? 'blink' : 'open';
   const mouth = !dead && (flights.some(f => f.p > .5) || (seal.chew > 0 && Math.floor(seal.chew * 14) % 2 === 0)) ? 1 : 0;
-  const d = sealDims(seal.disp), s = sealSprite(d.w, mouth, eyes, false, myPal(), d.extra);
+  const s = sealSprite(g.w, mouth, eyes, false, myPal(), g.extra); // on land g carries the galumph's squash and stretch
   const bob = seal.chew > 0 ? Math.floor(seal.chew * 14) % 2 : 0;
-  const ang = sealJump().ang;
-  if (ang) {
+  const ang = sealJump().ang, flip = perch && !rod && swim && swim.dir < 0; // galumphing west she faces west
+  if (ang || flip) {
     ctx.save();
     ctx.translate(Math.round(g.left + g.w / 2), Math.round(g.top + g.h / 2 - CY + bob));
-    ctx.rotate(ang);
+    if (flip) ctx.scale(-1, 1);
+    if (ang) ctx.rotate(ang);
     ctx.drawImage(s.c, -Math.round(g.w / 2) - s.pad, -Math.round(g.h / 2) - s.pad);
     ctx.restore();
   } else ctx.drawImage(s.c, g.left - s.pad, g.top - s.pad - CY + bob);
@@ -1897,7 +2129,7 @@ function bar(x, y, w, h, frac, col) {
   ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fillRect(x + 1, y + 1, fw, 1);
 }
 function drawHUD() {
-  const showLine = !!hooked, showShark = !!shark, pw = 122, ph = showLine || showShark ? 33 : 25, x = W - pw - 2, y = 2;
+  const showLine = !!hooked, showShark = !!shark, showAir = state === 'roam' && air < 1 && !showLine && !showShark, pw = 122, ph = showLine || showShark || showAir ? 33 : 25, x = W - pw - 2, y = 2;
   panel(x, y, pw, ph);
   const danger = seal.size < 18, sizeCol = danger ? (Math.floor(t * 4) % 2 ? '#e04a3a' : '#a02a1a') : seal.size < 26 ? '#f0a030' : '#58c04a';
   txt('SIZE', x + 5, y + 5, INK, 1, null);
@@ -1911,19 +2143,33 @@ function drawHUD() {
     bar(x + 24, y + 23, 56, 7, tension, tension > .7 ? '#e04a3a' : tension > .4 ? '#f0c030' : '#7cc4e8');
     if (hooked.thrash > 0 && Math.floor(t * 6) % 2) txt('PULLING!', x + 84, y + 24, '#c0301a', 1, null);
   }
+  if (showAir) {
+    const low = air < .25;
+    txt('AIR', x + 5, y + 24, INK, 1, null);
+    bar(x + 24, y + 23, 56, 7, air, low ? (Math.floor(t * 4) % 2 ? '#e04a3a' : '#a02a1a') : air < .5 ? '#f0c030' : '#7cc4e8');
+    if (low && Math.floor(t * 4) % 2) txt('SURFACE!', x + 84, y + 24, '#c0301a', 1, null);
+  }
   if (showShark) {
     txt('SHARK', x + 5, y + 24, INK, 1, null);
     bar(x + 28, y + 23, 52, 7, shark.hp / shark.max, '#e04a3a');
     if (shark.state === 'stun' && Math.floor(t * 6) % 2) txt('BITE!', x + 84, y + 24, '#2a7a2a', 1, null);
   }
-  const depthY = swimming() && swim ? swim.y : hook.y;
+  const depthY = swimming() && swim ? swim.y : perch && !rod ? 0 : hook.y;
   if ((state === 'play' || state === 'boss' || state === 'roam') && depthY > SURF + 2) txt('DEPTH ' + Math.round((depthY - SURF) / 10) + 'M', 4, H - 9, '#e6f6ff');
   if (state === 'roam' && curZone) {
     ctxt(curZone.name, W / 2, 5, '#ffffff');
-    if (curZone.id === 'baikal' && !best.skinUnlocked) ctxt('NERPAS FED ' + (best.fed || 0) + '/10', W / 2, 14, '#ffb0d0');
+    if (bait) ctxt(BAITS[bait].name + ' BAIT', W / 2, 14, '#ffe36a');
+    if (curZone.id === 'baikal' && !best.skinUnlocked) ctxt('NERPAS FED ' + (best.fed || 0) + '/10', W / 2, bait ? 23 : 14, '#ffb0d0');
     const near = !perch && perchAt();
-    if (perch) { if (!hooked && roamT < 90) ctxt('SPACE OR TAP THE ' + perch.name + ': DIVE BACK IN', W / 2, H - 18, '#ffffff'); }
-    else if (near) ctxt('SPACE OR TAP THE ' + near.name + ': HAUL OUT AND FISH', W / 2, H - 18, '#ffe36a');
+    if (grabbed) {
+      if (Math.floor(t * 4) % 2) ctxt('MASH A AND D (OR TAP LEFT AND RIGHT) TO BREAK FREE!', W / 2, H - 30, '#ff6a5a');
+      bar(W / 2 - 40, H - 20, 80, 7, escape, '#ffd84a');
+    } else if (perch) {
+      if (rod) { if (!hooked && roamT < 120) ctxt('SPACE OR TAP HER: STOW THE ROD', W / 2, H - 18, '#ffffff'); }
+      else if (perch.shop && !wasAtDoor && Math.abs(swim.x - perch.shop.door) < 60) ctxt('GALUMPH UP TO THE SHACK DOOR TO BUY BAIT', W / 2, H - 18, '#ffe36a');
+      else ctxt('LEFT/RIGHT: GALUMPH   SPACE: CAST   DOWN: DIVE IN', W / 2, H - 18, '#ffffff');
+    }
+    else if (near) ctxt('SPACE OR TAP THE ' + near.name + ': HAUL OUT', W / 2, H - 18, '#ffe36a');
     else if (roamT < 8) ctxt('SWIM EAST FOR NEW WATERS. T: FAST TRAVEL', W / 2, H - 18, '#ffffff');
     else if (curZone.id === 'baikal' && !best.skinUnlocked && roamT < 60) ctxt('FISH EATEN NEXT TO A NERPA ARE SHARED WITH IT', W / 2, H - 18, '#ffffff');
   }
@@ -1997,6 +2243,22 @@ function drawTravel() {
   });
   ctxt('UP/DOWN + SPACE, OR TAP. T: CLOSE', W / 2, TRAVEL_Y + 22 + n * 14 + 4, '#7a5a3a', 1, null);
 }
+const SHOP_Y = 24; // top of the bait shop panel; rows follow at 16px steps from SHOP_Y + 30
+function drawShop() {
+  ctx.fillStyle = 'rgba(8,16,28,.5)'; ctx.fillRect(0, 0, W, H);
+  const n = BAITS.length, have = kg(seal.size);
+  panel(56, SHOP_Y, 208, 32 + n * 16 + 12);
+  ctxt('WALRUS BAIT SHACK', W / 2, SHOP_Y + 6, INK, 1, null);
+  ctxt('PAY IN BLUBBER. YOU WEIGH ' + have + ' KG', W / 2, SHOP_Y + 16, '#7a5a3a', 1, null);
+  BAITS.forEach((B, i) => {
+    const y = SHOP_Y + 30 + i * 16, afford = have - B.cost >= kg(MIN_SIZE) + 8;
+    if (i === shopSel) { ctx.fillStyle = '#e6cf9f'; ctx.fillRect(60, y - 3, 200, 15); }
+    txt(B.name, 66, y, INK, 1, null); txt(B.note, 66, y + 7, '#7a5a3a', 1, null);
+    const price = i === bait ? 'USING' : B.cost ? B.cost + ' KG' : 'FREE';
+    txt(price, 254 - tw(price), y, i === bait ? '#2a7a2a' : afford ? INK : '#b03a1a', 1, null);
+  });
+  ctxt('UP/DOWN + SPACE: BUY   ESC OR TAP OUTSIDE: LEAVE', W / 2, SHOP_Y + 30 + n * 16 + 2, '#7a5a3a', 1, null);
+}
 function drawJournal() {
   ctx.fillStyle = 'rgba(8,16,28,.5)'; ctx.fillRect(0, 0, W, H);
   panel(8, 6, 304, 168);
@@ -2005,13 +2267,14 @@ function drawJournal() {
   list.forEach((T, i) => {
     const x = 12 + (i % 3) * 100, y = 24 + Math.floor(i / 3) * 28, have = journal[T.name] > 0, s = fishSprite(T).c;
     ctx.fillStyle = have ? '#e6cf9f' : '#dcc89c'; ctx.fillRect(x, y, 98, 26);
-    ctx.drawImage(have ? s : tinted(s, '#9a8868'), x + 23 - Math.floor(s.width / 2), y + 13 - Math.floor(s.height / 2));
+    const sk = Math.min(1, 40 / s.width, 24 / s.height), sw = Math.round(s.width * sk), shh = Math.round(s.height * sk); // the giants are shrunk to fit their card
+    ctx.drawImage(have ? s : tinted(s, '#9a8868'), x + 23 - Math.floor(sw / 2), y + 13 - Math.floor(shh / 2), sw, shh);
     if (have) {
       txt(T.name, x + 46, y + 5, INK, 1, null);
       txt('CAUGHT X' + journal[T.name], x + 46, y + 14, '#7a5a3a', 1, null);
     } else {
       txt('? ? ?', x + 46, y + 5, '#8a7a5a', 1, null);
-      txt(T.dmin >= 300 ? 'SEABED' : T.dmin >= 120 ? 'DEEP' : 'SHALLOW', x + 46, y + 14, '#8a7a5a', 1, null);
+      txt(T.needBait ? BAITS[T.needBait].name + ' ONLY' : T.dmin >= 300 ? 'SEABED' : T.dmin >= 120 ? 'DEEP' : 'SHALLOW', x + 46, y + 14, '#8a7a5a', 1, null);
     }
   });
   const ready = bossReady();
@@ -2021,7 +2284,7 @@ function drawDead() {
   if (deadT < 1.5) return;
   ctx.fillStyle = 'rgba(8,16,28,.45)'; ctx.fillRect(0, 0, W, H);
   panel(70, 36, 180, 108);
-  ctxt('IT STARVED...', W / 2, 46, '#8a2a1a', 2, null);
+  ctxt(deathCause || 'IT STARVED...', W / 2, 46, '#8a2a1a', 2, null);
   const m = Math.floor(elapsed / 60), s = String(Math.floor(elapsed % 60)).padStart(2, '0');
   const rows = [
     ['FISH EATEN', String(caught)],
@@ -2038,6 +2301,7 @@ function drawRoamSurface(CX) {
   for (let sx = 0; sx < W; sx++) {
     const x = CX + sx, zz = zoneAt(x), wy = surfaceAt(x), sy = wy - CY;
     if (sy > H || sy < -4 || (zz.id === 'arctic' && x < ICE_EDGE)) continue;
+    const L = landAt(x); if (L && L.depth && (!L.dock || x < L.dock)) continue; // solid land draws its own waterline
     ctx.fillStyle = zz.surf; ctx.fillRect(x, sy, 1, SURF + 3 - wy);
     ctx.fillStyle = hex(mix(zz.surf, '#ffffff', .6)); ctx.fillRect(x, sy, 1, 1);
   }
@@ -2067,7 +2331,7 @@ function renderRoam() {
   for (const f of fishes) drawFish(f);
   drawHostiles();
   drawNerpas();
-  drawPerches(CX);
+  drawLands(CX);
   drawSeal();
   ctx.restore();
   const span = roamBed(swim.x) - SURF, dk = roamDark(swim.x);
@@ -2089,13 +2353,14 @@ function renderRoam() {
     for (let i = 0; i < 30; i++) { const x = CX + ((i * 97 + Math.floor(t * 2 + i) * 13) % W), y = CY + ((i * 61) % H); if (y > SURF + 350 && Math.sin(t * 4 + i) > .6) ctx.fillRect(x, y - CY, 1, 1); }
   }
   drawRoamSurface(CX);
-  if (perch) { drawRodAndLine(); drawFlights(); }
+  if (perch) { if (rod) drawRodAndLine(); drawFlights(); }
   drawGhost();
   drawParts();
   ctx.restore();
   drawHUD(); drawJournalButton();
   if (state === 'dead') drawDead();
   if (travelOpen) drawTravel();
+  if (shopOpen) drawShop();
   if (journalOpen) drawJournal();
   if (paused) {
     ctx.fillStyle = 'rgba(8,16,28,.5)'; ctx.fillRect(0, 0, W, H);
@@ -2156,11 +2421,17 @@ reset();
 state = 'title';
 // dev shortcut: open index.html#boss to jump straight into the shark fight with a well-fed seal (skips the journal, nothing is saved by the jump itself)
 if (location.hash === '#boss') { state = 'play'; seal.size = seal.disp = 70; breakIce(); }
+// dev shortcut: index.html#squid drops her into the trench, glow lure in hand, with the giant squid closing in
+if (location.hash === '#squid') {
+  startRoam(true); const m = zoneById('mariana'); bait = 3;
+  swim.x = m.x0 + m.w / 2; swim.y = SURF + 560; camX = swim.x - W / 2; camY = swim.y - 90; setZone(m, true); spawnHostiles();
+  const h = hostiles.find(o => o.T === GIANT_SQUID); h.x = h.hx = swim.x + 50; h.y = h.hy = swim.y;
+}
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(.05, (now - last) / 1000);
   last = now;
-  if (!paused && !journalOpen && !travelOpen) update(dt);
+  if (!paused && !journalOpen && !travelOpen && !shopOpen) update(dt);
   render();
   requestAnimationFrame(frame);
 }
